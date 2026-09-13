@@ -34,7 +34,7 @@ for start, size in windows:
 for function in (0, 1):
     assert f"pci_dev!(0, 1, 0x00, {function} => 0, 0x1a, {function}," in board
 assert "modprobe.blacklist=nouveau" in board
-assert "module_blacklist=nouveau,snd_hda_intel" in board
+assert "module_blacklist=nouveau" in board
 assert "nvidia_drm.modeset=1 nvidia_drm.fbdev=1" in board
 assert "nomodeset" not in board
 assert "panic=0" in board
@@ -51,7 +51,7 @@ for i, region in enumerate(regions):
             assert not (region[key] < other[key] + other["size"] and
                         other[key] < region[key] + region["size"]), "region overlap"
 assert "0x001AFFFF, One, Zero, 0x11" in asl
-assert "0x001AFFFF, 0x02, Zero, 0x12" in asl
+assert "0x001AFFFF, 0x02, Zero, 0x11" in asl
 assert "OperationRegion" not in re.sub(r"//[^\n]*", "", asl)
 devices = re.findall(r"pci_dev!\((\d+), (\d+), (0x[0-9a-f]+), (\d+) => (\d+), (0x[0-9a-f]+), (\d+),", board)
 physical = [tuple(map(number, d[:4])) for d in devices]

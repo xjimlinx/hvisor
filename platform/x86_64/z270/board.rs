@@ -47,7 +47,7 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Do not use nosmp/maxcpus: all assigned APs boot through virtual SIPI.
 // Bare-metal Wayland profile, validated with GP102 and Plasma Login.
 // Keep HDMI audio isolated until separately tested; preserve INFO in hvisor.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau,snd_hda_intel panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
 pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 22] = [
     HvConfigMemoryRegion {

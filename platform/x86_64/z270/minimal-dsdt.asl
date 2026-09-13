@@ -62,7 +62,8 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 // Native PEG0 AR01 routing, translated to guest slot 1a.
                 Package () { 0x001AFFFF, Zero, Zero, 0x10 },
                 Package () { 0x001AFFFF, One, Zero, 0x11 },
-                Package () { 0x001AFFFF, 0x02, Zero, 0x12 },
+                // Native GP102 HDMI pin C routes to GSI 17 (bridge swizzle).
+                Package () { 0x001AFFFF, 0x02, Zero, 0x11 },
                 Package () { 0x001AFFFF, 0x03, Zero, 0x13 }
             })
             Device (SAT0) { Name (_ADR, 0x00170000) }
