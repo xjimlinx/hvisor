@@ -47,9 +47,9 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Do not use nosmp/maxcpus: all assigned APs boot through virtual SIPI.
 // Bare-metal Wayland profile, validated with GP102 and Plasma Login.
 // Keep HDMI audio isolated until separately tested; preserve INFO in hvisor.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau i2c_i801.disable_features=0x10 panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 26] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 27] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -114,6 +114,13 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 26] = [
         physical_start: 0x8fba_2000,
         virtual_start: 0x8fba_2000,
         size: 0x0005_e000,
+    },
+    // SMBus BAR0 is 256 bytes; dedicate its containing page to Zone0.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_IO,
+        physical_start: 0xdf34_a000,
+        virtual_start: 0xdf34_a000,
+        size: 0x1000,
     },
     // PCH HD Audio: both native BAR windows, no PMC/LPC registers.
     HvConfigMemoryRegion {
@@ -258,7 +265,8 @@ pub const ROOT_PCI_MAX_BUS: usize = 0;
 // the unassigned LPC function 00:1f.0. VT-d still uses physical BDF 00:1f.6.
 // GPU functions share guest slot 00:1a; VT-d uses physical 01:00.0/1.
 // Keep the existing NVIDIA blacklist until SSH is available for driver tests.
-pub const ROOT_PCI_DEVS: [HvPciDevConfig; 9] = [
+pub const ROOT_PCI_DEVS: [HvPciDevConfig; 10] = [
+    pci_dev!(0, 0, 0x1f, 4 => 0, 0x1e, 0, VpciDevType::Physical), // SMBus
     pci_dev!(0, 0, 0x1f, 3 => 0, 0x1d, 0, VpciDevType::Physical), // PCH audio
     pci_dev!(0, 4, 0x00, 0 => 0, 0x1c, 0, VpciDevType::Physical), // ASMedia USB
     pci_dev!(0, 5, 0x00, 0 => 0, 0x1b, 0, VpciDevType::Physical), // AX210

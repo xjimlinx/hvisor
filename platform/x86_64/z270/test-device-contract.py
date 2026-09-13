@@ -56,7 +56,9 @@ assert "OperationRegion" not in re.sub(r"//[^\n]*", "", asl)
 devices = re.findall(r"pci_dev!\((\d+), (\d+), (0x[0-9a-f]+), (\d+) => (\d+), (0x[0-9a-f]+), (\d+),", board)
 physical = [tuple(map(number, d[:4])) for d in devices]
 virtual = [(number(d[0]), *map(number, d[4:])) for d in devices]
-assert len(devices) == 9
+assert len(devices) == 10
+assert "pci_dev!(0, 0, 0x1f, 4 => 0, 0x1e, 0," in board
+assert "i2c_i801.disable_features=0x10" in cmdline
 assert "pci_dev!(0, 0, 0x1f, 3 => 0, 0x1d, 0," in board
 assert "pci_dev!(0, 4, 0x00, 0 => 0, 0x1c, 0," in board
 assert "0xDF200000, 0xDF207FFF, 0, 0x8000" in asl
