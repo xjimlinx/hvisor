@@ -22,6 +22,8 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
                     0, 0, 0, 0, 1)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDF300000, 0xDF31FFFF, 0, 0x20000)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDF330000, 0xDF33FFFF, 0, 0x10000)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDF348000, 0xDF349FFF, 0, 0x2000)
@@ -42,10 +44,15 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 Package () { 0x0014FFFF, Zero, Zero, 0x10 },
                 Package () { 0x0014FFFF, One, Zero, 0x11 },
                 Package () { 0x0014FFFF, 0x02, Zero, 0x12 },
-                Package () { 0x0014FFFF, 0x03, Zero, 0x13 }
+                Package () { 0x0014FFFF, 0x03, Zero, 0x13 },
+                Package () { 0x0019FFFF, Zero, Zero, 0x10 },
+                Package () { 0x0019FFFF, One, Zero, 0x11 },
+                Package () { 0x0019FFFF, 0x02, Zero, 0x12 },
+                Package () { 0x0019FFFF, 0x03, Zero, 0x13 }
             })
             Device (SAT0) { Name (_ADR, 0x00170000) }
             Device (XHC0) { Name (_ADR, 0x00140000) }
+            Device (GLAN) { Name (_ADR, 0x00190000) }
         }
         Device (HPET)
         {

@@ -12,7 +12,7 @@ make ARCH=x86_64 BOARD=z270 MODE=release LOG=info elf
 ```
 
 Build-time ASL compilation supplies the minimal guest DSDT. Zone0 exposes one
-CPU, the host bridge, SATA AHCI and Intel PCH xHCI; other devices remain
+CPU, the host bridge, SATA AHCI, Intel PCH xHCI and I219-V; other devices remain
 unassigned. Guest Linux payloads are the existing Arch 6.18.50-2-lts files,
 not included here. Keep their initrd length consistent with board.rs.
 
@@ -22,16 +22,20 @@ not included here. Keep their initrd length consistent with board.rs.
   userspace services started.
 - After quiescing assigned xHCI before the VT-d address-space switch, the user
   confirmed that the physical USB keyboard works.
-- Tested deployed ELF SHA256:
-  `10c3885b3a3912ecff31981a218f31fe43f13f104739a98022eeafba30f6e3e6`.
+- Network follow-up was verified over IPv6 SSH inside Zone0: physical I219-V
+  `00:1f.6` appears as guest `00:19.0`, uses `e1000e`, and connects through the
+  existing NetworkManager PPPoE profile on `enp0s25`. The profile has no fixed
+  interface-name/MAC binding; no credentials belong in this repository.
+- Tested network-enabled ELF SHA256:
+  `14eb68d78ebe2e458a99551a53b8c0e4df95636f6caa9a9962609d5e0f8e4ede`.
 - This is a bring-up checkpoint, not proof of long-term storage integrity,
   complete interrupt virtualization or arbitrary PCI passthrough.
 
 ## Scope and known limits
 
 Normal Arch/GRUB and rollback boot files are maintained separately; this repo
-does not contain deployment credentials or boot artifacts. No GPU/network
-passthrough is enabled by this board profile. Guest APIC state supports the
+does not contain deployment credentials or boot artifacts. GPU and Wi-Fi
+passthrough are not enabled by this board profile. Guest APIC state supports the
 tested single-vCPU path, not full nested interrupt priority/level-triggered
 semantics or multi-vCPU xAPIC logical routing. The MMIO decoder is a limited
 MOV-family emulator, not a general x86 instruction emulator. Early xHCI tracing

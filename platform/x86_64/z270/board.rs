@@ -49,7 +49,7 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // nosmp also disables IO-APIC on x86. maxcpus=1 preserves interrupt routing.
 pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nomodeset maxcpus=1 nmi_watchdog=0 modprobe.blacklist=nvidia,nouveau nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=multi-user.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 15] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 16] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -100,6 +100,13 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 15] = [
         physical_start: 0x7_0000_0000,
         virtual_start: 0x7_0000_0000,
         size: 0x1_6f00_0000,
+    },
+    // Intel I219-V 00:1f.6 BAR0, kept at its real MMIO address.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_IO,
+        physical_start: 0xdf30_0000,
+        virtual_start: 0xdf30_0000,
+        size: 0x2_0000,
     },
     // Intel PCH xHCI 00:14.0 BAR0 (captured native resource: 64 KiB).
     // Assign together with its PCI function/VT-d domain and ACPI window.
@@ -180,11 +187,13 @@ pub const ROOT_PCI_CONFIG: [HvPciConfig; 1] = [HvPciConfig {
 
 pub const ROOT_PCI_MAX_BUS: usize = 0;
 // Login reached on the AHCI-only profile. Add just the PCH USB controller;
-// ASMedia USB on bus 4 and the network controller remain unassigned.
-pub const ROOT_PCI_DEVS: [HvPciDevConfig; 3] = [
+// I219-V is exposed as a standalone function, so enumeration does not need
+// the unassigned LPC function 00:1f.0. VT-d still uses physical BDF 00:1f.6.
+pub const ROOT_PCI_DEVS: [HvPciDevConfig; 4] = [
     pci_dev!(0, 0, 0x00, 0 => 0, 0x00, 0, VpciDevType::Physical), // host bridge
     pci_dev!(0, 0, 0x14, 0 => 0, 0x14, 0, VpciDevType::Physical), // Intel xHCI
     pci_dev!(0, 0, 0x17, 0 => 0, 0x17, 0, VpciDevType::Physical), // SATA AHCI
+    pci_dev!(0, 0, 0x1f, 6 => 0, 0x19, 0, VpciDevType::Physical), // I219-V -> 00:19.0
 ];
 
 #[cfg(all(graphics))]
