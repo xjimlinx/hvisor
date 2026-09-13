@@ -47,11 +47,9 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Keep the real generator path enabled after repairing the guest CPUID
 // contract. Keep warnings but disable systemd's source-location/debug flood.
 // nosmp also disables IO-APIC on x86. maxcpus=1 preserves interrupt routing.
-// modprobe.blacklist alone did NOT prevent nvidia-uvm dependencies from
-// loading in the real Arch guest. Enforce driver-free PCI enumeration in the
-// kernel for this diagnostic candidate. This also blocks manual modprobe;
-// remove module_blacklist only in a subsequent driver-testing candidate.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nomodeset maxcpus=1 nmi_watchdog=0 modprobe.blacklist=nvidia,nouveau module_blacklist=nvidia,nvidia_uvm,nvidia_modeset,nvidia_drm,nouveau,snd_hda_intel panic=0 nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=multi-user.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.zone0=1\0";
+// Driver-test profile: requires the Zone0-only modprobe install gate documented
+// in README. Keep KMS/UVM/audio disabled while core nvidia is tested over SSH.
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nomodeset maxcpus=1 nmi_watchdog=0 modprobe.blacklist=nvidia,nouveau module_blacklist=nvidia_uvm,nvidia_modeset,nvidia_drm,nouveau,snd_hda_intel panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=multi-user.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.zone0=1\0";
 
 pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 20] = [
     HvConfigMemoryRegion {

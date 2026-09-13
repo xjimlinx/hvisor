@@ -34,7 +34,7 @@ for start, size in windows:
 for function in (0, 1):
     assert f"pci_dev!(0, 1, 0x00, {function} => 0, 0x1a, {function}," in board
 assert "modprobe.blacklist=nvidia,nouveau" in board
-assert "module_blacklist=nvidia,nvidia_uvm,nvidia_modeset,nvidia_drm,nouveau,snd_hda_intel" in board
+assert "module_blacklist=nvidia_uvm,nvidia_modeset,nvidia_drm,nouveau,snd_hda_intel" in board
 assert "panic=0" in board
 assert "systemd.unit=multi-user.target" in board
 assert "0x001AFFFF, One, Zero, 0x11" in asl

@@ -63,6 +63,10 @@ const VM_EXIT_INSTR_LEN_RDMSR: u8 = 2;
 const VM_EXIT_INSTR_LEN_WRMSR: u8 = 2;
 const VM_EXIT_INSTR_LEN_VMCALL: u8 = 3;
 
+#[cfg(z270_minimal_acpi)]
+#[path = "parking_exit.rs"]
+mod parking_exit;
+
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TrapFrame {
@@ -332,6 +336,28 @@ fn handle_io_instruction(arch_cpu: &mut ArchCpu, exit_info: &VmxExitInfo) -> HvR
         return hv_result_err!(ENOSYS);
     }
 
+    // CF9 byte accesses are the PCH reset register, not a partial CF8
+    // CONFIG_ADDRESS access. Keep dword CF8 accesses virtualized. Only the
+    // bare-metal root zone owns platform reset; other zones must not reach it.
+    #[cfg(z270_minimal_acpi)]
+    if io_info.port == 0xcf9 && io_info.access_size == 1 {
+        if this_zone_id() != 0 {
+            return hv_result_err!(EPERM);
+        }
+        let mut port = x86_64::instructions::port::Port::<u8>::new(0xcf9);
+        if io_info.is_in {
+            let value = unsafe { port.read() };
+            let regs = arch_cpu.regs_mut();
+            regs.rax = (regs.rax & !0xff) | value as u64;
+        } else {
+            let value = arch_cpu.regs().rax as u8;
+            info!("Zone0 PCH reset control write: {:#x}", value);
+            unsafe { port.write(value) };
+        }
+        arch_cpu.advance_guest_rip(exit_info.exit_instruction_length as _)?;
+        return Ok(());
+    }
+
     let mut value: u32 = 0;
     if !io_info.is_in {
         let rax = arch_cpu.regs().rax;
@@ -490,6 +516,26 @@ pub fn handle_vmexit(arch_cpu: &mut ArchCpu) -> HvResult {
 
     if exit_info.entry_failure {
         panic!("VM entry failed: {:#x?}", exit_info);
+    }
+
+    #[cfg(z270_minimal_acpi)]
+    if parking_exit::resume_parked_init(
+        exit_info.exit_reason as u32,
+        this_cpu_id(),
+        crate::platform::ROOT_ZONE_CPUS,
+        this_cpu_data().vcpu_state.is_running(),
+    ) {
+        // INIT caused an exit, not execution of an instruction or a guest
+        // reset. Resume the existing parking loop without advancing RIP,
+        // injecting INIT into Linux, or changing VMCS activity/state.
+        // Never apply this policy to the BSP or an assigned/running vCPU.
+        use core::sync::atomic::{AtomicU64, Ordering};
+        static REPORTED: AtomicU64 = AtomicU64::new(0);
+        let bit = 1u64 << this_cpu_id();
+        if REPORTED.fetch_or(bit, Ordering::Relaxed) & bit == 0 {
+            warn!("CPU{}: physical INIT received in parking VM; preserving parked state (source unknown)", this_cpu_id());
+        }
+        return Ok(());
     }
 
     let res = match exit_info.exit_reason {
