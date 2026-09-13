@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1800" height="1340" viewBox="0 0 1800 1340" role="img" aria-labelledby="title desc">
+<title id="title">Z270 · hvisor 裸机资源架构</title>
+<desc id="desc">分层展示 Zone0、hvisor 的控制路径、19 个物理 PCI 功能与上游桥。19 功能全拓扑已实机启动验证；LPC/PMC平台功能未验收。右上虚线 Zone 仅为未来规划。</desc>
+<defs>
+ <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.8" fill="#dfe5ec"/></pattern>
+ <linearGradient id="navy" x2="1" y2="1"><stop stop-color="#152c46"/><stop offset="1" stop-color="#244966"/></linearGradient>
+ <linearGradient id="mint" x2="1" y2="1"><stop stop-color="#e9f8f3"/><stop offset="1" stop-color="#f7fcfa"/></linearGradient>
+ <filter id="shadow" x="-15%" y="-20%" width="130%" height="150%"><feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#183a57" flood-opacity=".065"/></filter>
+ <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M1 1L8 5L1 9" fill="none" stroke="#608697" stroke-width="1.5"/></marker>
+ <g id="cpu" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="5" y="5" width="14" height="14" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M8 1V5M16 1V5M8 19V23M16 19V23M1 8H5M1 16H5M19 8H23M19 16H23"/></g>
+ <g id="gpu" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="5" width="20" height="13" rx="2"/><circle cx="10" cy="11.5" r="3.5"/><path d="M17 8H19M17 11H19M17 14H19M5 18V21H16V18M1 3V20"/></g>
+ <g id="usb" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 21V3M9 6L12 3L15 6M12 14L6 10V7M12 17L18 13V9"/><circle cx="12" cy="21" r="1.5"/><circle cx="6" cy="5" r="1.5"/><rect x="16.5" y="6" width="3" height="3"/></g>
+ <g id="disk" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="2" width="16" height="20" rx="3"/><circle cx="12" cy="10" r="4"/><path d="M12 10L17 15M7 18H10M14 18H17"/></g>
+ <g id="net" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 4H21V18H16V21H8V18H3Z"/><path d="M7 4V10M10 4V10M14 4V10M17 4V10"/></g>
+ <g id="wifi" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 7Q12 -1 22 7M5 11Q12 5 19 11M8 15Q12 11 16 15"/><circle cx="12" cy="19" r="1.3"/></g>
+ <g id="shield" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2L21 6V12Q21 19 12 23Q3 19 3 12V6Z"/><path d="M8 12L11 15L17 9"/></g>
+ <g id="screen" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 22H16M12 17V22M6 7L9 10L6 13M12 13H17"/></g>
+ <g id="ram" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1" y="6" width="22" height="12" rx="2"/><path d="M5 18V21M9 18V21M15 18V21M19 18V21"/><rect x="5" y="9" width="5" height="5"/><rect x="14" y="9" width="5" height="5"/></g>
+</defs>
+<style>
+ text{font-family:"Noto Sans CJK SC","Source Han Sans SC","Microsoft YaHei",sans-serif;fill:#1b344b}
+ .eyebrow{font-size:13px;letter-spacing:2px;fill:#687f90;font-weight:600}
+ .h{font-size:24px;font-weight:700}.body{font-size:17px}.sm{font-size:14px;fill:#637b8d}
+ .mono{font-family:"DejaVu Sans Mono","Noto Sans CJK SC",monospace;font-size:13px;fill:#5b7286}
+ .white{fill:#fff}.mutewhite{fill:#b9cedc}.line{fill:none;stroke:#91a9b7;stroke-width:1.7}
+ .flow{fill:none;stroke:#608697;stroke-width:1.8;marker-end:url(#arrow);marker-start:url(#arrow)}
+</style>
+<rect width="1800" height="1340" fill="#f6f8fb"/><rect width="1800" height="1340" fill="url(#grid)" opacity=".65"/>
+<path d="M80 61L103 49L126 61L103 73Z M80 75L103 87L126 75 M80 89L103 101L126 89" fill="none" stroke="#218778" stroke-width="3" stroke-linejoin="round"/>
+<text x="145" y="68" class="eyebrow">BARE-METAL / RESOURCE OWNERSHIP</text>
+<text x="145" y="112" font-size="40" font-weight="700">Z270 · 一台实机，一个管理域</text>
+<text x="80" y="151" class="body" fill="#637b8d">ASUS PRIME Z270-AR  /  i7-7700K  /  32 GiB  /  GTX 1080 Ti</text>
+<rect x="1248" y="58" width="472" height="64" rx="12" fill="#fff4df" stroke="#edd8ad"/>
+<circle cx="1271" cy="80" r="4" fill="#b98020"/>
+<text x="1286" y="86" font-size="16" fill="#966821" font-weight="600">原生拓扑 · 实机已启动</text>
+<text x="1270" y="109" class="sm">19 PCI 功能 · 8 线程 · 桌面与双网络正常</text>
+<text x="80" y="197" class="eyebrow">01 / GUEST OWNERSHIP</text>
+<!-- Zone0 owns the usable resources, not the hypervisor control layer. -->
+<rect x="80" y="218" width="1208" height="196" rx="20" fill="url(#mint)" stroke="#b6dcd0" filter="url(#shadow)"/>
+<rect x="104" y="242" width="54" height="54" rx="14" fill="#d4eee4"/>
+<use xlink:href="#screen" transform="translate(116 254) scale(1.25)" color="#218778"/>
+<text x="178" y="265" font-size="28" font-weight="700" fill="#166c5e">Zone0</text>
+<text x="178" y="292" class="body">可信管理域 · Arch Linux 6.18 LTS</text>
+<rect x="716" y="246" width="246" height="57" rx="12" fill="#fff" stroke="#d5e8e1"/>
+<use xlink:href="#cpu" transform="translate(733 261)" color="#218778"/>
+<text x="772" y="270" font-size="18" font-weight="600">CPU 0–7</text><text x="772" y="289" class="sm">4 核 / 8 线程</text>
+<rect x="980" y="246" width="284" height="57" rx="12" fill="#fff" stroke="#d5e8e1"/>
+<use xlink:href="#ram" transform="translate(998 261)" color="#218778"/>
+<text x="1037" y="270" font-size="18" font-weight="600">约 31.2 GiB 可用 RAM</text><text x="1037" y="289" class="sm">保留 hvisor 与固件占用</text>
+<path d="M104 324H1264" stroke="#c9e2d8"/>
+<text x="107" y="360" class="body">原生驱动</text><path d="M203 354H235" class="flow"/>
+<text x="252" y="360" class="body">systemd</text><path d="M344 354H376" class="flow"/>
+<text x="393" y="360" class="body">Plasma Login / KDE Wayland</text>
+<text x="107" y="390" class="sm">统一使用设备 · 保留桌面、存储与远程管理链路</text>
+<text x="904" y="369" font-size="18" font-weight="600" fill="#218778">实测：19 项 PCI 功能归属 Zone0</text>
+<!-- Future owners are deliberately not connected to active control paths. -->
+<rect x="1320" y="218" width="400" height="196" rx="20" fill="#f5f3fb" stroke="#bcb1d3" stroke-dasharray="7 6"/>
+<text x="1344" y="255" font-size="21" font-weight="600" fill="#78649d">未来 Zone · 规划</text>
+<text x="1344" y="280" class="sm">按依赖单元拆分，不是只换 owner</text><rect x="1344" y="300" width="106" height="64" rx="10" fill="#fff" stroke="#d9d0e7"/>
+<use xlink:href="#gpu" transform="translate(1385 307) scale(1)" color="#8a77a8"/>
+<text x="1397" y="351" class="sm" text-anchor="middle">GPU + HDMI</text>
+<rect x="1461" y="300" width="106" height="64" rx="10" fill="#fff" stroke="#d9d0e7"/>
+<use xlink:href="#usb" transform="translate(1502 307) scale(1)" color="#8a77a8"/>
+<text x="1514" y="351" class="sm" text-anchor="middle">独占 USB</text>
+<rect x="1578" y="300" width="106" height="64" rx="10" fill="#fff" stroke="#d9d0e7"/>
+<use xlink:href="#wifi" transform="translate(1619 307) scale(1)" color="#8a77a8"/>
+<text x="1631" y="351" class="sm" text-anchor="middle">Wi-Fi</text>
+<text x="1344" y="393" class="sm" font-size="12">跨 Zone DMA / IRQ / 复位隔离：待实现与验证</text>
+<path d="M340 422V452M940 422V452" class="flow"/><text x="376" y="443" class="sm" >驱动访问 · CPU 执行</text>
+<text x="978" y="443" class="sm" >DMA · 中断投递</text>
+<rect x="80" y="472" width="1640" height="211" rx="20" fill="url(#navy)" filter="url(#shadow)"/><use xlink:href="#shield" transform="translate(105 493) scale(1.3)" color="#82d6c4"/>
+<text x="150" y="519" class="h white" >hvisor</text>
+<text x="266" y="517" class="body mutewhite" >控制层 · 始终保留</text>
+<text x="1690" y="516" class="eyebrow mutewhite" text-anchor="end">02 / CONTROL PLANE</text>
+<text x="106" y="576" class="h white" font-size="21">设备发现 → 归属</text>
+<text x="106" y="610" class="body mutewhite" >枚举物理拓扑 → 具名清单</text>
+<text x="106" y="637" class="sm mutewhite" >ROOT_PCI_DEVS → guest_pci_init</text>
+<path d="M490 553V654" stroke="#49617a"/><text x="510" y="576" class="h white" font-size="21">CPU 与内存</text>
+<text x="510" y="610" class="body mutewhite" >VT-x / VMCS · EPT</text>
+<text x="510" y="637" class="sm mutewhite" >客体 RAM 与显式 BAR 映射</text>
+<path d="M894 553V654" stroke="#49617a"/><text x="914" y="576" class="h white" font-size="21">DMA 与中断</text>
+<text x="914" y="610" class="body mutewhite" >VT-d · APIC / IOAPIC · MSI</text>
+<text x="914" y="637" class="sm mutewhite" >物理 BDF 关联 · DMA 交接</text>
+<path d="M1298 553V654" stroke="#49617a"/><text x="1318" y="576" class="h white" font-size="21">客体硬件视图</text>
+<text x="1318" y="610" class="body mutewhite" >vPCI · ACPI / MCFG / DSDT</text>
+<text x="1318" y="637" class="sm mutewhite" >配置空间处理 · 原生 BDF 可见</text>
+<path d="M900 691V725" class="flow"/><text x="933" y="716" class="sm" >受控映射与访问；不等于无条件开放全部寄存器</text>
+<text x="80" y="745" class="eyebrow" >03 / PHYSICAL PCIe TOPOLOGY</text>
+<text x="1720" y="745" class="sm" text-anchor="end">物理 BDF  /  G = 原生 Arch IOMMU 组</text>
+<path d="M900 830V838" class="line"/><path d="M188 838H1592" stroke="#7c9dac" stroke-width="3" fill="none"/>
+<rect x="634" y="774" width="532" height="56" rx="13" fill="#e8eef4" stroke="#c8d5df"/><text x="900" y="797" class="body" text-anchor="middle" font-weight="600">Z270 PCIe Root Complex</text>
+<text x="900" y="817" class="mono" text-anchor="middle">00:00.0 · G0  |  原生 bus 00–06</text>
+<path d="M188 838V851" class="line"/><circle cx="188" cy="838" r="4" fill="#7c9dac"/><rect x="80" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="81" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="188" y="879" class="sm" text-anchor="middle">PEG 00:01.0 · G1</text>
+<text x="188" y="903" class="mono" text-anchor="middle">bus 01</text>
+<path d="M188 928V944" class="line"/><use xlink:href="#gpu" transform="translate(100 951) scale(1.15)" color="#40887e"/>
+<text x="138" y="973" class="h" style="font-size:20px">显示单元</text>
+<text x="100" y="1006" class="body" >GTX 1080 Ti</text>
+<text x="100" y="1032" class="mono" >01:00.0 · G1</text>
+<text x="100" y="1058" class="body" >HDMI 音频</text>
+<text x="100" y="1084" class="body" >01:00.1 · G1</text>
+<path d="M96 1118H280" stroke="#e3e9ee"/><text x="188" y="1143" class="sm" text-anchor="middle">共同评估电源与复位</text>
+<path d="M422 838V851" class="line"/><circle cx="422" cy="838" r="4" fill="#7c9dac"/><rect x="314" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="315" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="422" y="879" class="sm" text-anchor="middle">PCH xHCI</text>
+<text x="422" y="903" class="mono" text-anchor="middle">00:14.0 · G2</text>
+<path d="M422 928V944" class="line"/><use xlink:href="#usb" transform="translate(334 951) scale(1.15)" color="#40887e"/>
+<text x="372" y="973" class="h" style="font-size:20px">输入 / USB</text>
+<text x="334" y="1006" class="body" >键盘 / 鼠标</text>
+<text x="334" y="1032" class="body" >USB 外设</text>
+<text x="334" y="1058" class="body" >AX210 蓝牙</text>
+<text x="334" y="1084" class="body" >经 USB 连接</text>
+<path d="M330 1118H514" stroke="#e3e9ee"/><text x="422" y="1143" class="sm" text-anchor="middle">整个控制器一起归属</text>
+<path d="M656 838V851" class="line"/><circle cx="656" cy="838" r="4" fill="#7c9dac"/><rect x="548" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="549" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="656" y="879" class="sm" text-anchor="middle">SATA AHCI</text>
+<text x="656" y="903" class="mono" text-anchor="middle">00:17.0 · G4</text>
+<path d="M656 928V944" class="line"/><use xlink:href="#disk" transform="translate(568 951) scale(1.15)" color="#40887e"/>
+<text x="606" y="973" class="h" style="font-size:20px">存储</text>
+<text x="568" y="1006" class="body" >系统 SSD</text>
+<text x="568" y="1032" class="mono" >数据盘</text>
+<text x="568" y="1058" class="body" >共用 AHCI 控制器</text>
+<path d="M564 1118H748" stroke="#e3e9ee"/><text x="656" y="1143" class="sm" text-anchor="middle">不可仅按磁盘拆 PCI</text>
+<path d="M890 838V851" class="line"/><circle cx="890" cy="838" r="4" fill="#7c9dac"/><rect x="782" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="783" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="890" y="879" class="sm" text-anchor="middle">Intel I219-V</text>
+<text x="890" y="903" class="mono" text-anchor="middle">00:1f.6 · G11</text>
+<path d="M890 928V944" class="line"/><use xlink:href="#net" transform="translate(802 951) scale(1.15)" color="#40887e"/>
+<text x="840" y="973" class="h" style="font-size:20px">管理网络</text>
+<text x="802" y="1006" class="body" >PPPoE</text>
+<text x="802" y="1032" class="mono" >SSH 远程管理</text>
+<text x="802" y="1058" class="body" >保留替代访问链路</text>
+<path d="M798 1118H982" stroke="#e3e9ee"/><text x="890" y="1143" class="sm" text-anchor="middle">管理链路优先保留</text>
+<path d="M1124 838V851" class="line"/><circle cx="1124" cy="838" r="4" fill="#7c9dac"/><rect x="1016" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="1017" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="1124" y="879" class="sm" text-anchor="middle">RP5 00:1c.4 · G7</text>
+<text x="1124" y="903" class="mono" text-anchor="middle">bus 04</text>
+<path d="M1124 928V944" class="line"/><use xlink:href="#usb" transform="translate(1036 951) scale(1.15)" color="#40887e"/>
+<text x="1074" y="973" class="h" style="font-size:20px">扩展 USB</text>
+<text x="1036" y="1006" class="body" >ASMedia xHCI</text>
+<text x="1036" y="1032" class="mono" >04:00.0 · G12</text>
+<text x="1036" y="1058" class="body" >该控制器全部端口</text>
+<path d="M1032 1118H1216" stroke="#e3e9ee"/><text x="1124" y="1143" class="sm" text-anchor="middle">独占 USB Zone 候选</text>
+<path d="M1358 838V851" class="line"/><circle cx="1358" cy="838" r="4" fill="#7c9dac"/><rect x="1250" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="1251" y="852" width="214" height="76" rx="14" fill="#edf3f7" stroke="none"/>
+<text x="1358" y="879" class="sm" text-anchor="middle">RP8 00:1c.7 · G8</text>
+<text x="1358" y="903" class="mono" text-anchor="middle">bus 05</text>
+<path d="M1358 928V944" class="line"/><use xlink:href="#wifi" transform="translate(1270 951) scale(1.15)" color="#40887e"/>
+<text x="1308" y="973" class="h" style="font-size:20px">无线网络</text>
+<text x="1270" y="1006" class="body" >Intel AX210</text>
+<text x="1270" y="1032" class="mono" >05:00.0 · G13</text>
+<text x="1270" y="1058" class="body" >Wi-Fi ≠ USB 蓝牙</text>
+<path d="M1266 1118H1450" stroke="#e3e9ee"/><text x="1358" y="1143" class="sm" text-anchor="middle">无线与蓝牙分别建模</text>
+<path d="M1592 838V851" class="line"/><circle cx="1592" cy="838" r="4" fill="#7c9dac"/><rect x="1484" y="851" width="216" height="307" rx="15" fill="#fff" stroke="#d5dfe7"/>
+<rect x="1485" y="852" width="214" height="76" rx="14" fill="#fff4e3" stroke="none"/>
+<text x="1592" y="879" class="sm" text-anchor="middle" style="font-size:12px">LPC / PMC / HDA / SMBus</text>
+<text x="1592" y="903" class="mono" text-anchor="middle" style="font-size:12px">00:1f.{0,2,3,4} · G10</text>
+<path d="M1592 928V944" class="line"/><use xlink:href="#shield" transform="translate(1504 951) scale(1.15)" color="#ad833e"/>
+<text x="1542" y="973" class="h" style="font-size:20px">平台管理</text>
+<text x="1504" y="1006" class="body" >共享平台资源</text>
+<text x="1504" y="1032" class="mono" >电源 / legacy I/O</text>
+<text x="1504" y="1058" class="body" >MEI 00:16.0 · G3</text>
+<path d="M1500 1118H1684" stroke="#e3e9ee"/><text x="1592" y="1143" class="sm" text-anchor="middle">优先保留在管理域</text>
+<path d="M80 1191H1720" stroke="#d4dde5"/><text x="80" y="1220" class="body" font-weight="600">空分支</text>
+<text x="185" y="1220" class="mono" >RP17 00:1b.0 · G5 → bus 02   /   RP1 00:1c.0 · G6 → bus 03   /   RP9 00:1d.0 · G9 → bus 06</text>
+<text x="80" y="1260" class="body" font-weight="600">分配原则</text>
+<text x="185" y="1260" class="body" >设备 owner + RAM / EPT + VT-d + IRQ / CPU + ACPI + 复位权限，必须同步变更。</text>
+<text x="80" y="1302" class="sm" >实线：实现结构 / 物理依赖    虚线：未来分域规划    组号不是隔离证明；BAR 自动分配与跨 Zone 安全仍待完善。</text>
+<text x="1720" y="1302" class="eyebrow" text-anchor="end">2026.09.13  /  Z270 LAB</text>
+
+</svg>

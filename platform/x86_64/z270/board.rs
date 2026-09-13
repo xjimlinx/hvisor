@@ -46,10 +46,10 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // contract. Keep warnings but disable systemd's source-location/debug flood.
 // Do not use nosmp/maxcpus: all assigned APs boot through virtual SIPI.
 // Bare-metal Wayland profile, validated with GP102 and Plasma Login.
-// Keep HDMI audio isolated until separately tested; preserve INFO in hvisor.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau i2c_i801.disable_features=0x10 panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
+// HDMI/PCH audio use the validated guest-side MSI policy; preserve hvisor INFO.
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau i2c_i801.disable_features=0x10 panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=6,realloc=off root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 28] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 30] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -115,6 +115,20 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 28] = [
         virtual_start: 0x8fba_2000,
         size: 0x0005_e000,
     },
+    // Native reserved PWRM range, separate from APIC/VT-d registers.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_IO,
+        physical_start: 0xfe00_0000,
+        virtual_start: 0xfe00_0000,
+        size: 0x11000,
+    },
+    // Native PMC PCI BAR; platform management is now owned by trusted Zone0.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_IO,
+        physical_start: 0xdf34_4000,
+        virtual_start: 0xdf34_4000,
+        size: 0x4000,
+    },
     // MEI HECI register window, management Zone0 only.
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_IO,
@@ -129,7 +143,7 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 28] = [
         virtual_start: 0xdf34_a000,
         size: 0x1000,
     },
-    // PCH HD Audio: both native BAR windows, no PMC/LPC registers.
+    // PCH HD Audio: both native BAR windows; PMC has its own mapping above.
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_IO,
         physical_start: 0xdf34_0000,
@@ -195,7 +209,7 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 28] = [
         size: 0x1000,
     },
     // GP102 01:00.0 BAR0/1/3 and HDMI audio 01:00.1 BAR0. Keep the
-    // firmware BAR addresses: no PCI bridge or unrelated endpoint is exposed.
+    // firmware BAR addresses; the native bridge topology is preserved below.
     // UC is conservative for initial bring-up, including VRAM apertures.
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_IO,
@@ -252,9 +266,9 @@ pub const ROOT_ARCH_ZONE_CONFIG: HvArchZoneConfig = HvArchZoneConfig {
 
 pub const ROOT_PCI_CONFIG: [HvPciConfig; 1] = [HvPciConfig {
     bus_range_begin: 0,
-    bus_range_end: 0,
+    bus_range_end: 6,
     ecam_base: 0xe000_0000,
-    ecam_size: 0x100_000,
+    ecam_size: 0x700_000,
     io_base: 0,
     io_size: 0,
     pci_io_base: 0,
@@ -267,24 +281,47 @@ pub const ROOT_PCI_CONFIG: [HvPciConfig; 1] = [HvPciConfig {
     domain: 0,
 }];
 
-pub const ROOT_PCI_MAX_BUS: usize = 0;
-// I219-V is exposed as a standalone function, so enumeration does not need
-// the unassigned LPC function 00:1f.0. VT-d still uses physical BDF 00:1f.6.
-// GPU functions share guest slot 00:1a; VT-d uses physical 01:00.0/1.
-// Keep the existing NVIDIA blacklist until SSH is available for driver tests.
-pub const ROOT_PCI_DEVS: [HvPciDevConfig; 11] = [
-    pci_dev!(0, 0, 0x16, 0 => 0, 0x16, 0, VpciDevType::Physical), // MEI
-    pci_dev!(0, 0, 0x1f, 4 => 0, 0x1e, 0, VpciDevType::Physical), // SMBus
-    pci_dev!(0, 0, 0x1f, 3 => 0, 0x1d, 0, VpciDevType::Physical), // PCH audio
-    pci_dev!(0, 4, 0x00, 0 => 0, 0x1c, 0, VpciDevType::Physical), // ASMedia USB
-    pci_dev!(0, 5, 0x00, 0 => 0, 0x1b, 0, VpciDevType::Physical), // AX210
-    pci_dev!(0, 0, 0x00, 0 => 0, 0x00, 0, VpciDevType::Physical), // host bridge
-    pci_dev!(0, 0, 0x14, 0 => 0, 0x14, 0, VpciDevType::Physical), // Intel xHCI
-    pci_dev!(0, 0, 0x17, 0 => 0, 0x17, 0, VpciDevType::Physical), // SATA AHCI
-    pci_dev!(0, 0, 0x1f, 6 => 0, 0x19, 0, VpciDevType::Physical), // I219-V -> 00:19.0
-    pci_dev!(0, 1, 0x00, 0 => 0, 0x1a, 0, VpciDevType::Physical), // GTX 1080 Ti
-    pci_dev!(0, 1, 0x00, 1 => 0, 0x1a, 1, VpciDevType::Physical), // HDMI audio
-];
+pub const ROOT_PCI_MAX_BUS: usize = 6;
+// A single audited inventory generates the identity assignment, not a second
+// hand-maintained guest BDF list. Groups are native Linux observations, NOT
+// proof of hvisor isolation. Parent is an inventory key ("root" for bus 0).
+// This policy deliberately has no per-device owner knob: splitting a Zone
+// also requires changing EPT, DMA, IRQ, reset and ACPI contracts together.
+macro_rules! zone0_native_inventory {
+    ($(($name:literal, $bus:literal, $dev:literal, $fun:literal,
+        $group:literal, $parent:literal)),+ $(,)?) => {
+        #[allow(dead_code)]
+        pub const Z270_PCI_INVENTORY: &[(&str, u8, u8, u8, u8, &str)] = &[
+            $(($name, $bus, $dev, $fun, $group, $parent)),+
+        ];
+        pub const ROOT_PCI_DEVS: [HvPciDevConfig; Z270_PCI_INVENTORY.len()] = [
+            $(pci_dev!(0, $bus, $dev, $fun => $bus, $dev, $fun,
+                VpciDevType::Physical)),+
+        ];
+    };
+}
+
+zone0_native_inventory! {
+    ("host",     0, 0x00, 0,  0, "root"),
+    ("peg",      0, 0x01, 0,  1, "root"),
+    ("pch-usb",  0, 0x14, 0,  2, "root"),
+    ("mei",      0, 0x16, 0,  3, "root"),
+    ("ahci",     0, 0x17, 0,  4, "root"),
+    ("rp17",     0, 0x1b, 0,  5, "root"),
+    ("rp1",      0, 0x1c, 0,  6, "root"),
+    ("rp5",      0, 0x1c, 4,  7, "root"),
+    ("rp8",      0, 0x1c, 7,  8, "root"),
+    ("rp9",      0, 0x1d, 0,  9, "root"),
+    ("lpc",      0, 0x1f, 0, 10, "root"),
+    ("pmc",      0, 0x1f, 2, 10, "root"),
+    ("pch-hda",  0, 0x1f, 3, 10, "root"),
+    ("smbus",    0, 0x1f, 4, 10, "root"),
+    ("ethernet", 0, 0x1f, 6, 11, "root"),
+    ("gpu",      1, 0x00, 0,  1, "peg"),
+    ("hdmi",     1, 0x00, 1,  1, "peg"),
+    ("asmedia",  4, 0x00, 0, 12, "rp5"),
+    ("wifi",     5, 0x00, 0, 13, "rp8"),
+}
 
 #[cfg(all(graphics))]
 pub const GRAPHICS_FONT: &[u8] =

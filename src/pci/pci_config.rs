@@ -327,7 +327,9 @@ impl Zone {
                 if let Some(dev) = guard.get(&bdf) {
                     if bdf.is_host_bridge(dev.read().get_host_bdf().bus())
                         || dev.with_config_value(|config_value| -> bool {
-                            config_value.get_class().0 == 0x6
+                            // ISA/LPC (06:01) is an owned endpoint, not a
+                            // PCI-to-PCI routing bridge (06:04).
+                            matches!(config_value.get_class(), (0x6, 0x4, _))
                         })
                     {
                         let mut vdev = dev.read().config_space.clone();

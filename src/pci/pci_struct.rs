@@ -2156,7 +2156,10 @@ impl<B: BarAllocator> PciIterator<B> {
 
             if parent.device == MAX_DEVICE {
                 if let Some(mut parent) = self.stack.pop() {
-                    self.is_finish = parent.subordinate_bus as usize == self.bus_range.end;
+                    // Reaching the highest subordinate bus does not exhaust
+                    // the parent bus: Z270 bus 06 is followed by 00:1f.*.
+                    // Only popping the root traversal frame finishes scanning.
+                    self.is_finish = self.stack.is_empty();
 
                     parent.update_bridge_bus();
                     self.function = parent.function;
