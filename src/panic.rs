@@ -21,11 +21,29 @@ use core::panic::PanicInfo;
 #[panic_handler]
 
 fn on_panic(info: &PanicInfo) -> ! {
+    // A panic in the bare-metal hypervisor must preserve the last screen for
+    // diagnosis. Disable maskable interrupts before touching the logger so a
+    // nested timer/device interrupt cannot turn this into a reset path.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("cli", options(nomem, nostack));
+    }
     error!("panic occurred: {:#?}", info);
     #[cfg(test)]
     {
         error!("panic occurred when running cargo test, quitting qemu");
         crate::tests::quit_qemu(HvUnitTestResult::Failed);
     }
-    loop {}
+    #[cfg(target_arch = "x86_64")]
+    error!("FAIL-STOP: CPU halted; use a manual reset to leave this screen");
+
+    loop {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            core::arch::asm!("cli; hlt", options(nomem, nostack));
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        core::hint::spin_loop();
+    }
 }

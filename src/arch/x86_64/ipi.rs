@@ -88,8 +88,8 @@ pub fn send_ipi(value: u64) -> HvResult {
     let vector = value.get_bits(0..=7) as u8;
     let delivery_mode: u8 = value.get_bits(8..=10) as u8;
     let dest_shorthand = value.get_bits(18..=19) as u8;
-    let dest = get_cpu_id(value.get_bits(32..=39) as usize);
-    let cnt = value.get_bits(40..=63) as u32;
+    let destination = (value >> 32) as u32;
+    let logical = value.get_bit(11);
 
     let mut cpu_set = this_zone().cpu_set();
     let cpu_id = this_cpu_id();
@@ -97,7 +97,19 @@ pub fn send_ipi(value: u64) -> HvResult {
 
     match dest_shorthand {
         IpiDestShorthand::NO_SHORTHAND => {
-            dest_set.set_bit(dest);
+            // Decode only in the explicit-destination case; shorthand ICRs
+            // need no valid destination field. Never target another zone.
+            for cpu in cpu_set.iter() {
+                let apic_id = get_apic_id(cpu) as u32;
+                let matches = if logical {
+                    crate::device::irqchip::pic::apic_destination::matches_logical(apic_id, destination)
+                } else {
+                    apic_id == destination
+                };
+                if matches {
+                    dest_set.set_bit(cpu);
+                }
+            }
         }
         IpiDestShorthand::SELF => {
             dest_set.set_bit(cpu_id);

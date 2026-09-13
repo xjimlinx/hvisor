@@ -16,6 +16,8 @@
 
 pub mod ioapic;
 pub mod lapic;
+pub mod apic_destination;
+pub mod apic_registers;
 
 use crate::{
     arch::{acpi, cpu::this_cpu_id, idt, ipi, msr, pio, vmcs::Vmcs},
@@ -33,6 +35,7 @@ static PENDING_VECTORS: Once<PendingVectors> = Once::new();
 struct InnerPendingVectors {
     pub queue: VecDeque<(u8, Option<u32>)>,
     pub has_eoi: bool,
+    pub in_service: Option<u8>,
 }
 
 struct PendingVectors {
@@ -46,6 +49,7 @@ impl PendingVectors {
             let v = Mutex::new(InnerPendingVectors {
                 queue: VecDeque::new(),
                 has_eoi: true,
+                in_service: None,
             });
             vs.push(v);
         }
@@ -73,7 +77,13 @@ impl PendingVectors {
                 }
                 // if it's an exception, or an interrupt that is not blocked, inject it directly.
                 Vmcs::inject_interrupt(vector.0, vector.1).unwrap();
-                vectors.has_eoi = false;
+                // Exceptions/NMIs are not LAPIC in-service interrupts and
+                // never receive EOI. Preserve any already outstanding IRQ.
+                if vector.0 >= 32 {
+                    let active = vector.0;
+                    vectors.has_eoi = false;
+                    vectors.in_service = Some(active);
+                }
                 vectors.queue.pop_front();
                 return true;
             } else if vectors.has_eoi {
@@ -87,11 +97,14 @@ impl PendingVectors {
     fn pop_vector(&self, cpu_id: usize) {
         let mut vectors = self.inner.get(cpu_id).unwrap().lock();
         vectors.has_eoi = true;
+        vectors.in_service = None;
     }
 
     fn clear_vectors(&self, cpu_id: usize) {
         let mut vectors = self.inner.get(cpu_id).unwrap().lock();
         vectors.queue.clear();
+        vectors.has_eoi = true;
+        vectors.in_service = None;
     }
 }
 
@@ -112,6 +125,21 @@ pub fn check_pending_vectors(cpu_id: usize) -> bool {
 
 pub fn pop_vector(cpu_id: usize) {
     PENDING_VECTORS.get().unwrap().pop_vector(cpu_id);
+}
+
+pub fn apic_bitmap(cpu_id: usize, bank: usize, isr: bool) -> u32 {
+    let vectors = PENDING_VECTORS.get().unwrap().inner[cpu_id].lock();
+    let mut bits = 0;
+    if isr {
+        if let Some(v) = vectors.in_service {
+            if v as usize / 32 == bank { bits |= 1u32 << (v % 32); }
+        }
+    } else {
+        for &(v, _) in &vectors.queue {
+            if v >= 32 && v as usize / 32 == bank { bits |= 1u32 << (v % 32); }
+        }
+    }
+    bits
 }
 
 pub fn clear_vectors(cpu_id: usize) {

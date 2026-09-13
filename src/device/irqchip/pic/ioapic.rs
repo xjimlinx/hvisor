@@ -228,6 +228,13 @@ fn mmio_ioapic_handler(mmio: &mut MMIOAccess, _: usize) -> HvResult {
 
 unsafe fn configure_gsi_from_raw(irq: u8, raw: u64) {
     // info!("irq={:x} {:x}", irq, raw);
+    let mut raw = raw;
+    // The Z270 single-vCPU guest may use xAPIC flat logical destination 1;
+    // the host remains x2APIC. Publish a physical BSP destination instead.
+    if this_zone().cpu_set().iter().count() == 1 {
+        raw.set_bit(11, false);
+        raw.set_bits(56..=63, this_apic_id() as u64);
+    }
     let mut io_apic = IO_APIC.lock();
     io_apic.set_table_entry(irq, core::mem::transmute(raw));
 }

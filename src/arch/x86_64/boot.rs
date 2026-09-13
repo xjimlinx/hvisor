@@ -45,6 +45,9 @@ use uguid::{guid, Guid};
 
 const ACPI_20_TABLE_GUID: Guid = guid!("8868E871-E4F1-11D3-BC22-0080C73C8881");
 
+// x86-specific board region: firmware-owned RAM used by AML OperationRegions.
+pub const MEM_TYPE_FIRMWARE_NVS: u32 = 6;
+
 mod multiboot_tag {
     pub const END: u32 = 0;
     pub const MODULES: u32 = 3;
@@ -255,6 +258,8 @@ impl BootParams {
                 e820_type = E820Type::E820_RESERVED;
             } else if mem_region.mem_type == MEM_TYPE_RAM {
                 e820_type = E820Type::E820_RAM;
+            } else if mem_region.mem_type == MEM_TYPE_FIRMWARE_NVS {
+                e820_type = E820Type::E820_NVS;
             }
 
             if e820_type != E820Type::E820_DEFAULT {
@@ -295,6 +300,8 @@ impl BootParams {
                 mem_desc_type = MemoryType::RUNTIME_SERVICES_DATA;
             } else if mem_region.mem_type == MEM_TYPE_RAM {
                 mem_desc_type = MemoryType::CONVENTIONAL;
+            } else if mem_region.mem_type == MEM_TYPE_FIRMWARE_NVS {
+                mem_desc_type = MemoryType::ACPI_NON_VOLATILE;
             }
 
             if mem_desc_type != MemoryType::RESERVED {
@@ -533,8 +540,28 @@ pub fn print_memory_map() {
             "base: {:x}, len: {:x}, type: {:x}",
             entry.base_addr, entry.length, entry._type
         );
-        entry_addr += size_of::<multiboot_tag::MemoryMapEntry>();
+        entry_addr += mem_map.entry_size as usize;
     }
+}
+
+/// Verify a board firmware mapping against this boot's GRUB memory map.
+/// Reject stale firmware addresses rather than mapping arbitrary RAM/MMIO.
+pub fn is_firmware_nvs_range(start: u64, size: u64) -> bool {
+    let Some(end) = start.checked_add(size) else { return false };
+    if size == 0 { return false; }
+    let map_addr = get_multiboot_tags().memory_map_addr.unwrap();
+    let map = unsafe { core::ptr::read_unaligned(map_addr as *const multiboot_tag::MemoryMap) };
+    let header_size = size_of::<multiboot_tag::MemoryMap>();
+    assert!(map.size as usize >= header_size);
+    assert!(map.entry_size as usize >= size_of::<multiboot_tag::MemoryMapEntry>());
+    assert_eq!((map.size as usize - header_size) % map.entry_size as usize, 0);
+    let count = (map.size as usize - header_size) / map.entry_size as usize;
+    (0..count).any(|index| {
+        let addr = map_addr + header_size + index * map.entry_size as usize;
+        let entry = unsafe { core::ptr::read_unaligned(addr as *const multiboot_tag::MemoryMapEntry) };
+        entry._type == E820Type::E820_NVS as u32 && entry.base_addr <= start
+            && entry.base_addr.checked_add(entry.length).is_some_and(|limit| end <= limit)
+    })
 }
 
 /// Construct Multiboot2 info structure in guest memory at `multiboot_info_paddr`.
@@ -837,10 +864,15 @@ pub fn module_init(info_addr: usize) {
             }
             if can_move {
                 if modules[i].dst != 0 {
-                    let size = modules[i].end - modules[i].start + 1;
+                    // Multiboot2's mod_end is the first byte after the module.
+                    let size = modules[i].end - modules[i].start;
                     let dst_end = modules[i].dst + size;
                     let overlaps_self =
                         modules[i].dst < modules[i].end && dst_end > modules[i].start;
+                    println!(
+                        "moving module {}: {:#x} bytes, overlap={}",
+                        i, size, overlaps_self
+                    );
                     unsafe {
                         if overlaps_self {
                             core::ptr::copy(
@@ -856,6 +888,9 @@ pub fn module_init(info_addr: usize) {
                             );
                         }
                     }
+                    println!("moved module {}", i);
+                } else {
+                    println!("module {} stays at its GRUB address", i);
                 }
                 moved[i] = true;
                 moved_count += 1;

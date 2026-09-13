@@ -54,7 +54,14 @@ fn get_pci_mmio_addr() -> Option<usize> {
 }
 
 pub fn handle_pci_config_port_read(io_info: &VmxIoExitInfo) -> u32 {
-    let mut value = 0u32;
+    // A disabled CONFIG_ADDRESS or an absent bus/device reads as all ones.
+    // Returning zero fabricates vendor 0000 devices during legacy probing.
+    let mut value = match io_info.access_size {
+        1 => 0xff,
+        2 => 0xffff,
+        4 => u32::MAX,
+        _ => panic!("unsupported PCI configuration access width"),
+    };
     if PCI_CONFIG_ADDR_PORT.contains(&io_info.port) {
         value = get_pio_bitmap(this_zone_id()).pci_config_addr;
 
@@ -74,7 +81,8 @@ pub fn handle_pci_config_port_read(io_info: &VmxIoExitInfo) -> u32 {
                     is_write: false,
                     value: 0,
                 };
-                mmio_handle_access(&mut mmio_access);
+                mmio_handle_access(&mut mmio_access)
+                    .expect("PCI configuration read handler failed");
                 value = mmio_access.value as _;
                 // info!("value: {:x}", value);
             }
@@ -103,7 +111,7 @@ pub fn handle_pci_config_port_write(io_info: &VmxIoExitInfo, value: u32) {
                     size: io_info.access_size as _,
                     is_write: true,
                     value: value as _,
-                });
+                }).expect("PCI configuration write handler failed");
             }
         }
     }

@@ -122,6 +122,7 @@ impl Zone {
         #[cfg(target_arch = "x86_64")]
         {
             self.ioapic_mmio_init(hv_config);
+            self.lapic_mmio_init();
             // self.pci_config_space_mmio_init(hv_config);
         }
     }

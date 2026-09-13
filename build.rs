@@ -162,6 +162,18 @@ fn main() {
     let board = build_env.board;
     let bid = build_env.bid;
 
+    println!("cargo:rustc-check-cfg=cfg(z270_minimal_acpi)");
+    if arch == "x86_64" && board == "z270" {
+        let source = "platform/x86_64/z270/minimal-dsdt.asl";
+        println!("cargo:rerun-if-changed={source}");
+        let prefix = Path::new(&env::var("OUT_DIR").unwrap()).join("z270-minimal-dsdt");
+        let status = std::process::Command::new("iasl")
+            .arg("-p").arg(&prefix).arg(source).status()
+            .expect("iasl is required to compile the Z270 guest DSDT");
+        assert!(status.success(), "Z270 guest DSDT compilation failed");
+        println!("cargo:rustc-cfg=z270_minimal_acpi");
+    }
+
     let pwd = env::current_dir().unwrap();
     log(&format!("Current directory: {}", pwd.display()));
 

@@ -163,8 +163,9 @@ impl From<MemFlags> for DescriptorAttr {
         if !flags.contains(MemFlags::IO) {
             attr.set_mem_type(MemType::WriteBack);
         } else {
-            attr.set_mem_type(MemType::WriteThrough);
-            //  attr &= !Self::READ;
+            // Device registers must not be cached or speculatively read.
+            // Also preserves IO on the DescriptorAttr -> MemFlags round trip.
+            attr.set_mem_type(MemType::Uncacheable);
         }
         attr
     }

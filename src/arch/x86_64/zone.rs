@@ -64,20 +64,28 @@ pub struct HvArchZoneConfig {
 
 impl Zone {
     pub fn pt_init(&mut self, mem_regions: &[HvConfigMemoryRegion]) -> HvResult {
+        let zone_id = self.id();
         let mut inner = self.write();
         for mem_region in mem_regions.iter() {
             let mut flags = MemFlags::READ | MemFlags::WRITE | MemFlags::EXECUTE;
             if mem_region.mem_type == MEM_TYPE_IO {
                 flags |= MemFlags::IO;
             }
+            if mem_region.mem_type == boot::MEM_TYPE_FIRMWARE_NVS {
+                assert_eq!(zone_id, 0, "firmware NVS is root-zone only");
+                assert_eq!(mem_region.physical_start, mem_region.virtual_start);
+                assert!(boot::is_firmware_nvs_range(mem_region.physical_start, mem_region.size),
+                    "firmware NVS mapping does not match this boot's physical map");
+                flags = MemFlags::READ | MemFlags::WRITE;
+            }
             match mem_region.mem_type {
-                MEM_TYPE_RAM | MEM_TYPE_IO | MEM_TYPE_RESERVED => {
+                MEM_TYPE_RAM | MEM_TYPE_IO | MEM_TYPE_RESERVED | boot::MEM_TYPE_FIRMWARE_NVS => {
                     inner.gpm_mut().insert(MemoryRegion::new_with_offset_mapper(
                         mem_region.virtual_start as GuestPhysAddr,
                         mem_region.physical_start as HostPhysAddr,
                         mem_region.size as _,
                         flags,
-                    ));
+                    ))?;
                 }
                 MEM_TYPE_VIRTIO => {
                     info!(

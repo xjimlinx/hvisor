@@ -35,9 +35,8 @@ ap_start16:
 
 .code32
 ap_start32:
-    mov     ax, 0x20
-    ltr     ax
-
+    // Do not load the legacy hard-coded TSS here. rust_main installs a
+    // build-correct, per-CPU TSS before loading the IDT.
     mov     esp, [stack_ptr]
     mov     eax, [entry_ptr]
     jmp     eax

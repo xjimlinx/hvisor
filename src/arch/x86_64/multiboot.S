@@ -151,10 +151,7 @@ bsp_entry64:
     movabs  rax, offset .Ltmp_gdt_desc
     lgdt    [rax]
 
-    // load task register
-    mov     ax, 0x20
-    ltr     ax
-    
+    // rust_main installs the build-correct per-CPU TSS before loading IDT.
     ENTRY64_COMMON
 
     // set stack and jump to rust_entry
@@ -175,6 +172,7 @@ ap_entry64:
     jmp     .Lhlt
 
 .Lhlt:
+    cli
     hlt
     jmp     .Lhlt
 

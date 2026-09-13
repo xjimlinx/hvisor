@@ -29,7 +29,9 @@ use tock_registers::interfaces::{Readable, Writeable};
 use tock_registers::register_bitfields;
 use tock_registers::register_structs;
 use tock_registers::registers::{ReadOnly, ReadWrite};
-pub use vtd_hw::{activate, clear_dma_translation_tables, fill_dma_translation_tables, flush};
+pub use vtd_hw::{
+    activate, check_faults, clear_dma_translation_tables, fill_dma_translation_tables, flush,
+};
 use vtd_hw::{iommu_add_device, iommu_init};
 
 pub(super) struct IntelVtd;

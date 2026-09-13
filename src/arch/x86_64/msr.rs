@@ -61,6 +61,8 @@ pub enum Msr {
     IA32_X2APIC_APICID = 0x802,
     /// Version register.
     IA32_X2APIC_VERSION = 0x803,
+    IA32_X2APIC_TPR = 0x808,
+    IA32_X2APIC_PPR = 0x80a,
     /// End-Of-Interrupt register.
     IA32_X2APIC_EOI = 0x80B,
     /// Logical Destination Register.
@@ -203,6 +205,14 @@ impl MsrBitmap {
         bitmap.set_write_intercept(IA32_X2APIC_EOI, true);
         bitmap.set_write_intercept(IA32_X2APIC_ICR, true);
         bitmap.set_write_intercept(IA32_X2APIC_LVT_TIMER, true);
+
+        // Share guest state between xAPIC MMIO and x2APIC MSR accesses.
+        for addr in 0x800..0x840 {
+            if let Ok(msr) = Msr::try_from(addr) {
+                bitmap.set_read_intercept(msr, true);
+                bitmap.set_write_intercept(msr, true);
+            }
+        }
 
         for addr in (IA32_X2APIC_ISR0 as u32)..(IA32_X2APIC_ISR7 as u32 + 1) {
             if let Ok(msr) = Msr::try_from(addr) {

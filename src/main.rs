@@ -175,7 +175,14 @@ fn wakeup_secondary_cpus(this_id: usize, host_dtb: usize) {
         if cpu_id == this_id {
             continue;
         }
+        // Every AP temporarily consumes the same physical trampoline page.
+        // Wait until it has installed its private TSS/GDT and reached Rust
+        // before rewriting that page for the next AP.
+        let expected_entered = ENTERED_CPUS.load(Ordering::Acquire) + 1;
+        println!("Starting CPU {} and waiting for trampoline handoff...", cpu_id);
         cpu_start(cpu_id, arch_entry as _, host_dtb);
+        wait_for_counter(&ENTERED_CPUS, expected_entered);
+        println!("CPU {} completed trampoline handoff.", cpu_id);
     }
 }
 
@@ -186,7 +193,7 @@ fn wakeup_secondary_cpus(this_id: usize, host_dtb: usize) {
 /// * `cpuid` - The logical cpu_id 0..BOARD_NCPUS.
 /// * `host_dtb` - The device tree blob address.
 fn rust_main(cpuid: usize, host_dtb: usize) {
-    arch::trap::install_trap_vector();
+    arch::trap::install_trap_vector(cpuid);
 
     let mut is_primary = false;
     extern "C" {

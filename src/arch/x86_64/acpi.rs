@@ -19,6 +19,7 @@ use crate::{
     config::{HvConfigMemoryRegion, HvZoneConfig},
     cpu_data::{this_zone, CpuSet},
     error::HvResult,
+    memory::addr::{phys_to_virt, virt_to_phys},
     platform::ROOT_PCI_MAX_BUS,
 };
 use acpi::{
@@ -27,7 +28,7 @@ use acpi::{
     mcfg::{Mcfg, McfgEntry},
     rsdp::Rsdp,
     sdt::{SdtHeader, Signature},
-    AcpiHandler, AcpiTables, AmlTable, PciConfigRegions,
+    AcpiHandler, AcpiTables, PciConfigRegions,
 };
 use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
@@ -38,9 +39,11 @@ use core::{
     mem::size_of,
     pin::Pin,
     ptr::{read_unaligned, write_unaligned, NonNull},
-    slice,
 };
 use spin::{Mutex, Once};
+
+#[path = "acpi_image.rs"]
+mod acpi_image;
 
 const RSDP_V1_SIZE: usize = 20;
 const RSDP_V2_SIZE: usize = 36;
@@ -58,7 +61,10 @@ const FADT_FACS_OFFSET_64: usize = 0x84;
 const SDT_HEADER_SIZE: usize = 36;
 
 const RSDP_CHECKSUM_OFFSET: usize = 8;
+const RSDP_REVISION_OFFSET: usize = 15;
 const ACPI_CHECKSUM_OFFSET: usize = 9;
+const X86_DIRECT_MAP_SIZE: usize = 1usize << 39;
+const MAX_ACPI_TABLE_SIZE: usize = 16 * 1024 * 1024;
 
 macro_rules! acpi_table {
     ($a: ident, $b: ident) => {
@@ -85,9 +91,10 @@ impl AcpiHandler for HvAcpiHandler {
         physical_address: usize,
         size: usize,
     ) -> acpi::PhysicalMapping<Self, T> {
+        let virtual_address = phys_to_virt(physical_address);
         acpi::PhysicalMapping::new(
             physical_address,
-            NonNull::new(physical_address as *mut T).unwrap(),
+            NonNull::new(virtual_address as *mut T).unwrap(),
             size,
             size,
             self.clone(),
@@ -113,49 +120,26 @@ pub struct AcpiTable {
     src: usize,
     patches: BTreeMap<usize, PatchValue>,
     len: usize,
-    checksum: u8,
+    checksum_offset: Option<usize>,
     gpa: usize,
     hpa: usize,
     is_addr_set: bool,
 }
 
-fn get_byte_sum_u32(value: u32) -> u8 {
-    value
-        .to_ne_bytes()
-        .iter()
-        .fold(0u8, |acc, &b| acc.wrapping_add(b))
-}
-
-fn get_byte_sum_u64(value: u64) -> u8 {
-    value
-        .to_ne_bytes()
-        .iter()
-        .fold(0u8, |acc, &b| acc.wrapping_add(b))
-}
-
 impl AcpiTable {
     pub fn set_u8(&mut self, value: u8, offset: usize) {
+        assert!(offset < self.len, "ACPI byte patch out of bounds");
         self.patches.insert(offset, PatchValue::U8(value));
-        let old = unsafe { *((self.src + offset) as *const u8) };
-        self.checksum = self.checksum.wrapping_add(old).wrapping_sub(value);
     }
 
     pub fn set_u32(&mut self, value: u32, offset: usize) {
+        assert!(offset.checked_add(4).is_some_and(|end| end <= self.len), "ACPI dword patch out of bounds");
         self.patches.insert(offset, PatchValue::U32(value));
-        let old = unsafe { read_unaligned((self.src + offset) as *const u32) };
-        self.checksum = self
-            .checksum
-            .wrapping_add(get_byte_sum_u32(old))
-            .wrapping_sub(get_byte_sum_u32(value));
     }
 
     pub fn set_u64(&mut self, value: u64, offset: usize) {
+        assert!(offset.checked_add(8).is_some_and(|end| end <= self.len), "ACPI qword patch out of bounds");
         self.patches.insert(offset, PatchValue::U64(value));
-        let old = unsafe { read_unaligned((self.src + offset) as *const u64) };
-        self.checksum = self
-            .checksum
-            .wrapping_add(get_byte_sum_u64(old))
-            .wrapping_sub(get_byte_sum_u64(value));
     }
 
     /// new len must not be longer
@@ -164,13 +148,7 @@ impl AcpiTable {
         println!("len: {:x}, selflen: {:x}", len, src_len);
         assert!(len <= src_len);
 
-        // update checksum
-        for offset in len..src_len {
-            self.checksum = self
-                .checksum
-                .wrapping_add(unsafe { *((self.src + offset) as *const u8) });
-        }
-
+        assert!(len >= SDT_HEADER_SIZE);
         self.set_u32(len as _, 4);
         self.len = len;
     }
@@ -222,7 +200,13 @@ impl AcpiTable {
         self.patches.clear();
         self.src = ptr as usize;
         self.len = len;
-        self.checksum = unsafe { *(ptr.wrapping_add(checksum_offset)) };
+        // FACS has no SDT checksum: bytes 8..12 are its hardware signature.
+        self.checksum_offset = if sig == Some(Signature::FACS) {
+            None
+        } else {
+            assert!(checksum_offset < len);
+            Some(checksum_offset)
+        };
     }
 
     pub unsafe fn copy_to_mem(&self) {
@@ -235,6 +219,15 @@ impl AcpiTable {
         }
 
         for (offset, value) in self.patches.iter() {
+            let width = match value {
+                PatchValue::U8(_) => 1,
+                PatchValue::U16(_) => 2,
+                PatchValue::U32(_) => 4,
+                PatchValue::U64(_) => 8,
+            };
+            assert!(offset.checked_add(width).is_some_and(|end| end <= self.len),
+                "ACPI patch outside {:?}: offset={:#x}, width={}, len={:#x}",
+                self.sig, offset, width, self.len);
             let addr = self.hpa + *offset;
             match *value {
                 PatchValue::U8(v) => write_patch!(addr, v, u8),
@@ -244,6 +237,12 @@ impl AcpiTable {
                 _ => {}
             }
         }
+        // Recompute from the final image, after all replacements/truncation.
+        // Never mutate the source firmware tables shared by other zones.
+        acpi_image::finish_checksum(
+            core::slice::from_raw_parts_mut(self.hpa as *mut u8, self.len),
+            self.checksum_offset,
+        );
     }
 
     pub fn set_addr(&mut self, hpa: usize, gpa: usize) {
@@ -252,10 +251,6 @@ impl AcpiTable {
         self.is_addr_set = true;
     }
 
-    /// for rsdp, offset = 8; for the others, offset = 9.
-    pub fn update_checksum(&mut self, offset: usize) {
-        unsafe { *((self.src + offset) as *mut u8) = self.checksum };
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -328,10 +323,41 @@ impl RootAcpi {
         acpi_zone_region: &HvConfigMemoryRegion,
         banned_tables: &BTreeSet<Signature>,
         cpu_set: &CpuSet,
+        minimal: bool,
     ) {
         let mut rsdp = self.rsdp.clone();
         let mut tables = self.tables.clone();
         let mut ssdts = self.ssdts.clone();
+        let mut pointers = self.pointers.clone();
+        // Owned image remains alive until every guest table has been copied.
+        let mut minimal_rsdt: Vec<u8> = Vec::new();
+        #[cfg(z270_minimal_acpi)]
+        if minimal {
+            let dsdt = include_bytes!(concat!(env!("OUT_DIR"), "/z270-minimal-dsdt.aml"));
+            let mut table = AcpiTable::default();
+            table.fill(Some(Signature::DSDT), dsdt.as_ptr(), dsdt.len(), ACPI_CHECKSUM_OFFSET);
+            tables.insert(Signature::DSDT, table);
+            ssdts.clear();
+            // Compact the RSDT: do not leave null pointers to removed SSDTs.
+            let mut offset = SDT_HEADER_SIZE;
+            for pointer in pointers.iter_mut() {
+                if pointer.from_sig == Signature::RSDT && pointer.to_sig != Signature::RSDT {
+                    pointer.from_offset = offset;
+                    offset += RSDT_PTR_SIZE;
+                }
+            }
+            let original = tables.get(&Signature::RSDT).unwrap();
+            minimal_rsdt.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(original.get_unpatched_src(), SDT_HEADER_SIZE)
+            });
+            minimal_rsdt.resize(offset, 0);
+            minimal_rsdt[4..8].copy_from_slice(&(offset as u32).to_le_bytes());
+            let mut table = AcpiTable::default();
+            table.fill(Some(Signature::RSDT), minimal_rsdt.as_ptr(), offset, ACPI_CHECKSUM_OFFSET);
+            tables.insert(Signature::RSDT, table);
+            assert!(pointers.iter().any(|p| p.to_sig == Signature::DSDT));
+            info!("Z270 minimal ACPI: generated DSDT, no firmware SSDTs/OperationRegions");
+        }
 
         // set rsdp addr
         rsdp.set_addr(
@@ -375,14 +401,20 @@ impl RootAcpi {
         let hpa_start = acpi_zone_region.physical_start as usize;
         let gpa_start = acpi_zone_region.virtual_start as usize;
         let mut cur: usize = 0;
+        assert!(rsdp.get_len() <= rsdp_zone_region.size as usize);
+        assert_eq!((hpa_start | gpa_start) & 63, 0, "ACPI region must be 64-byte aligned");
 
         let mut tables_involved = BTreeSet::<Signature>::new();
 
-        for pointer in self.pointers.iter() {
+        for pointer in pointers.iter() {
             let to = tables.get_mut(&pointer.to_sig).unwrap();
             tables_involved.insert(pointer.to_sig);
 
             if !to.is_addr_set {
+                cur = acpi_image::reserve_table(
+                    cur, to.get_len(), acpi_zone_region.size as usize,
+                    if pointer.to_sig == Signature::FACS { 64 } else { 8 },
+                ).expect("ACPI tables exceed guest region");
                 info!(
                     "sig: {:x?}, hpa: {:x?}, gpa: {:x?}, size: {:x?}",
                     pointer.to_sig,
@@ -420,6 +452,8 @@ impl RootAcpi {
         let ban_ssdt = banned_tables.contains(&Signature::SSDT);
         let from = tables.get_mut(&Signature::RSDT).unwrap();
         for (&offset, ssdt) in ssdts.iter_mut() {
+            cur = acpi_image::reserve_table(cur, ssdt.get_len(), acpi_zone_region.size as usize, 8)
+                .expect("SSDTs exceed guest ACPI region");
             info!(
                 "sig: {:x?}, hpa: {:x?}, gpa: {:x?}, size: {:x?}",
                 Signature::SSDT,
@@ -435,12 +469,6 @@ impl RootAcpi {
                 false => ssdt.gpa,
             };
             from.set_u32(to_gpa as _, offset);
-        }
-
-        // update checksums
-        rsdp.update_checksum(RSDP_CHECKSUM_OFFSET);
-        for (sig, table) in tables.iter_mut() {
-            table.update_checksum(ACPI_CHECKSUM_OFFSET);
         }
 
         // copy to memory
@@ -463,18 +491,46 @@ impl RootAcpi {
         let mut root_acpi = Self::default();
         let rsdp_addr = boot::get_multiboot_tags().rsdp_addr.unwrap();
 
-        root_acpi.rsdp_copy = unsafe {
-            slice::from_raw_parts(rsdp_addr as *const u8, core::mem::size_of::<Rsdp>()).to_vec()
-        };
-        let rsdp_copy_addr = root_acpi.rsdp_copy.as_ptr() as usize;
+        // Multiboot2 tag 14 contains exactly the 20-byte ACPI 1.0 portion of
+        // the firmware RSDP.  Do not read a full ACPI 2.0 Rsdp from it: the
+        // bytes after the tag belong to the next Multiboot tag.  This x86
+        // implementation builds an RSDT with 32-bit pointers, so expose a
+        // checksum-correct ACPI 1.0 view even when UEFI left revision=2 in
+        // those first 20 bytes.
+        root_acpi.rsdp_copy = vec![0u8; core::mem::size_of::<Rsdp>()];
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                rsdp_addr as *const u8,
+                root_acpi.rsdp_copy.as_mut_ptr(),
+                RSDP_V1_SIZE,
+            );
+        }
+        let firmware_revision = root_acpi.rsdp_copy[RSDP_REVISION_OFFSET];
+        let rsdt_addr = u32::from_le_bytes(
+            root_acpi.rsdp_copy[RSDP_RSDT_OFFSET..RSDP_RSDT_OFFSET + RSDP_RSDT_PTR_SIZE]
+                .try_into()
+                .unwrap(),
+        );
+        println!(
+            "ACPI v1 tag: firmware revision={}, RSDT={:#x}",
+            firmware_revision, rsdt_addr
+        );
+        assert!(rsdt_addr != 0);
+        root_acpi.rsdp_copy[RSDP_REVISION_OFFSET] = 0;
+        root_acpi.rsdp_copy[RSDP_CHECKSUM_OFFSET] = 0;
+        let checksum = root_acpi.rsdp_copy[..RSDP_V1_SIZE]
+            .iter()
+            .fold(0u8, |sum, &byte| sum.wrapping_add(byte));
+        root_acpi.rsdp_copy[RSDP_CHECKSUM_OFFSET] = 0u8.wrapping_sub(checksum);
+        let rsdp_copy_vaddr = root_acpi.rsdp_copy.as_ptr() as usize;
+        let rsdp_copy_paddr = virt_to_phys(rsdp_copy_vaddr);
 
         let handler = HvAcpiHandler {};
         let rsdp_mapping = unsafe {
-            handler.map_physical_region::<Rsdp>(rsdp_copy_addr, core::mem::size_of::<Rsdp>())
+            handler.map_physical_region::<Rsdp>(rsdp_copy_paddr, core::mem::size_of::<Rsdp>())
         };
 
-        // let rsdp_mapping = unsafe { Rsdp::search_for_on_bios(HvAcpiHandler {}).unwrap() };
-        // TODO: temporarily suppose we use ACPI 1.0
+        // The tag was deliberately normalized to the ACPI 1.0/RSDT view.
         assert!(rsdp_mapping.revision() == 0);
 
         root_acpi.rsdp.fill(
@@ -578,29 +634,110 @@ impl RootAcpi {
             // loop {}
 
             // dsdt
-            if let Ok(dsdt) = tables.dsdt() {
-                root_acpi.add_new_table(
-                    Signature::DSDT,
-                    (dsdt.address - SDT_HEADER_SIZE) as *const u8,
-                    (dsdt.length as usize + SDT_HEADER_SIZE),
-                );
+            // Read the FADT address fields by their ACPI-defined byte offsets.
+            // This avoids relying on a host Rust representation for a packed
+            // firmware table. Prefer the 64-bit field, with the compatibility
+            // 32-bit field as fallback.
+            let fadt_vaddr = fadt.virtual_start().as_ptr().cast::<u8>();
+            let fadt_len = fadt.region_length();
+            let read_fadt_address = |offset32: usize, offset64: usize| -> Option<usize> {
+                let addr32 = if fadt_len >= offset32 + size_of::<u32>() {
+                    unsafe { read_unaligned(fadt_vaddr.add(offset32).cast::<u32>()) as usize }
+                } else {
+                    0
+                };
+                let addr64 = if fadt_len >= offset64 + size_of::<u64>() {
+                    unsafe { read_unaligned(fadt_vaddr.add(offset64).cast::<u64>()) }
+                } else {
+                    0
+                };
                 println!(
-                    "sig: \"DSDT\" ptr: {:x}, len: {:x}",
-                    dsdt.address, dsdt.length
+                    "FADT address fields [{:#x}/{:#x}]: 32={:#x}, 64={:#x}",
+                    offset32, offset64, addr32, addr64
                 );
+                [usize::try_from(addr64).ok(), Some(addr32)]
+                    .into_iter()
+                    .flatten()
+                    .find(|&addr| addr != 0 && addr < X86_DIRECT_MAP_SIZE)
+            };
 
-                root_acpi.add_pointer(Signature::FADT, FADT_DSDT_OFFSET_32, Signature::DSDT, 4);
-                root_acpi.add_pointer(Signature::FADT, FADT_DSDT_OFFSET_64, Signature::DSDT, 8);
+            if let Some(dsdt_addr) =
+                read_fadt_address(FADT_DSDT_OFFSET_32, FADT_DSDT_OFFSET_64)
+            {
+                let dsdt_ptr = phys_to_virt(dsdt_addr) as *const u8;
+                let signature = unsafe { read_unaligned(dsdt_ptr.cast::<u32>()) };
+                let dsdt_len = unsafe { read_unaligned(dsdt_ptr.add(4).cast::<u32>()) as usize };
+                let end_is_mapped = dsdt_addr
+                    .checked_add(dsdt_len)
+                    .is_some_and(|end| end <= X86_DIRECT_MAP_SIZE);
+                let valid_header = signature == u32::from_le_bytes(*b"DSDT")
+                    && (SDT_HEADER_SIZE..=MAX_ACPI_TABLE_SIZE).contains(&dsdt_len)
+                    && end_is_mapped;
+                let valid_checksum = valid_header
+                    && unsafe { core::slice::from_raw_parts(dsdt_ptr, dsdt_len) }
+                        .iter()
+                        .fold(0u8, |sum, &byte| sum.wrapping_add(byte))
+                        == 0;
+
+                println!(
+                    "DSDT candidate: ptr={:#x}, len={:#x}, header={}, checksum={}",
+                    dsdt_addr, dsdt_len, valid_header, valid_checksum
+                );
+                if valid_checksum {
+                    root_acpi.add_new_table(Signature::DSDT, dsdt_ptr, dsdt_len);
+                    root_acpi.add_pointer(
+                        Signature::FADT,
+                        FADT_DSDT_OFFSET_32,
+                        Signature::DSDT,
+                        4,
+                    );
+                    // The legacy RSDT may reference a 132-byte FADT even
+                    // when the firmware's XSDT has a longer FADT. Do not write
+                    // absent extended fields into the following guest table.
+                    if fadt_len >= FADT_DSDT_OFFSET_64 + 8 {
+                        root_acpi.add_pointer(
+                            Signature::FADT,
+                            FADT_DSDT_OFFSET_64,
+                            Signature::DSDT,
+                            8,
+                        );
+                    }
+                }
             }
 
             // facs
-            if let Ok(facs_addr) = fadt.facs_address() {
-                let len = unsafe { *((facs_addr + 4) as *const u32) as usize };
-                root_acpi.add_new_table(Signature::FACS, facs_addr as *const u8, len);
-                println!("sig: \"FACS\" ptr: {:x}, len: {:x}", facs_addr, len);
-
-                root_acpi.add_pointer(Signature::FADT, FADT_FACS_OFFSET_32, Signature::FACS, 4);
-                root_acpi.add_pointer(Signature::FADT, FADT_FACS_OFFSET_64, Signature::FACS, 8);
+            if let Some(facs_addr) =
+                read_fadt_address(FADT_FACS_OFFSET_32, FADT_FACS_OFFSET_64)
+            {
+                let facs_ptr = phys_to_virt(facs_addr) as *const u8;
+                let signature = unsafe { read_unaligned(facs_ptr.cast::<u32>()) };
+                let facs_len = unsafe { read_unaligned(facs_ptr.add(4).cast::<u32>()) as usize };
+                let valid = signature == u32::from_le_bytes(*b"FACS")
+                    && (8..=MAX_ACPI_TABLE_SIZE).contains(&facs_len)
+                    && facs_addr
+                        .checked_add(facs_len)
+                        .is_some_and(|end| end <= X86_DIRECT_MAP_SIZE);
+                println!(
+                    "FACS candidate: ptr={:#x}, len={:#x}, valid={}",
+                    facs_addr, facs_len, valid
+                );
+                if valid {
+                    root_acpi.add_new_table(Signature::FACS, facs_ptr, facs_len);
+                    root_acpi.add_pointer(
+                        Signature::FADT,
+                        FADT_FACS_OFFSET_32,
+                        Signature::FACS,
+                        4,
+                    );
+                    if fadt_len >= FADT_FACS_OFFSET_64 + 8 {
+                        root_acpi.add_pointer(
+                            Signature::FADT,
+                            FADT_FACS_OFFSET_64,
+                            Signature::FACS,
+                            8,
+                        );
+                    }
+                }
             }
         }
 
@@ -636,6 +773,16 @@ impl RootAcpi {
         }
 
         // dmar
+        // Retain the physical timer description; this is not firmware AML.
+        #[cfg(z270_minimal_acpi)]
+        {
+            acpi_table!(HpetTable, HPET);
+            if let Ok(hpet) = tables.find_table::<HpetTable>() {
+                root_acpi.add_new_table(Signature::HPET, hpet.physical_start() as *const u8, hpet.region_length());
+                root_acpi.add_pointer(Signature::RSDT, rsdt_offset, Signature::HPET, RSDT_PTR_SIZE);
+                rsdt_offset += RSDT_PTR_SIZE;
+            }
+        }
         acpi_table!(Dmar, DMAR);
         if let Ok(dmar) = tables.find_table::<Dmar>() {
             root_acpi.add_new_table(
@@ -685,6 +832,7 @@ pub fn copy_to_guest_memory_region(config: &HvZoneConfig, cpu_set: &CpuSet) {
         &config.memory_regions()[config.arch_config.acpi_memory_region_id],
         &banned,
         cpu_set,
+        cfg!(z270_minimal_acpi) && config.zone_id == 0,
     );
 }
 

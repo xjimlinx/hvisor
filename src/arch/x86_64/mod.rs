@@ -28,6 +28,7 @@ pub mod idt;
 pub mod ipi;
 pub mod mm;
 pub mod mmio;
+mod mmio_address;
 pub mod msr;
 pub mod paging;
 pub mod pci;

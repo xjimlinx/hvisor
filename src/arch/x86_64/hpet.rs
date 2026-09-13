@@ -18,6 +18,8 @@ use crate::memory::VirtAddr;
 use bit_field::BitField;
 use core::{arch::x86_64::_rdtsc, time::Duration, u32};
 use spin::Mutex;
+#[path = "hpet_time.rs"]
+mod hpet_time;
 use tock_registers::{
     interfaces::{Readable, Writeable},
     register_structs,
@@ -125,6 +127,7 @@ impl Hpet {
         let cap = self.regs().general_caps.get();
         let num_timers = cap.get_bits(8..=12) as u8 + 1;
         let period_fs = cap.get_bits(32..);
+        assert!(period_fs != 0 && period_fs <= 100_000_000, "invalid HPET clock period");
         let is_64_bit = cap.get_bit(13);
         let freq_hz = 1_000_000_000_000_000 / period_fs;
         println!(
@@ -192,7 +195,7 @@ pub fn current_ticks() -> u64 {
 }
 
 pub fn ticks_to_nanos(ticks: u64) -> u64 {
-    ticks * 1_000 / HPET.freq_mhz
+    hpet_time::nanos_from_ticks(ticks, HPET.period_fs)
 }
 
 pub fn current_time_nanos() -> u64 {

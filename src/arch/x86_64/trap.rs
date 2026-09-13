@@ -18,7 +18,6 @@ use crate::{
     arch::{
         cpu::{this_cpu_id, ArchCpu},
         cpuid::{CpuIdEax, ExtendedFeaturesEcx, FeatureInfoFlags},
-        hpet,
         idt::{IdtStruct, IdtVector},
         ipi,
         msr::Msr::{self, *},
@@ -56,6 +55,7 @@ core::arch::global_asm!(
 
 const IRQ_VECTOR_START: u8 = 0x20;
 const IRQ_VECTOR_END: u8 = 0xff;
+const NMI_VECTOR: u8 = 2;
 
 const VM_EXIT_INSTR_LEN_CPUID: u8 = 2;
 const VM_EXIT_INSTR_LEN_HLT: u8 = 1;
@@ -84,7 +84,8 @@ lazy_static::lazy_static! {
     static ref IDT: IdtStruct = IdtStruct::new();
 }
 
-pub fn install_trap_vector() {
+pub fn install_trap_vector(cpu_id: usize) {
+    super::idt::install_fail_stop_tss(cpu_id);
     IDT.load();
 }
 
@@ -92,12 +93,44 @@ pub fn install_trap_vector() {
 pub fn arch_handle_trap(tf: &mut TrapFrame) {
     // println!("trap {} @ {:#x}", tf.vector, tf.rip);
     match tf.vector as u8 {
+        // With NMI exiting disabled, NMIs that arrive in VMX non-root mode go
+        // directly to Zone0 Linux. An NMI can still land during a short VMX-root
+        // window (or while an AP is entering its parking VM). Do not print, take
+        // locks, or touch the VMCS from this asynchronous context: returning via
+        // IRETQ safely completes the host-side NMI, and a later watchdog sample
+        // will reach Linux after guest execution resumes.
+        NMI_VECTOR => return,
         IRQ_VECTOR_START..=IRQ_VECTOR_END => handle_irq(tf.vector as u8),
         _ => {
+            // Fail closed before formatting the diagnostic. This prevents a
+            // nested maskable interrupt from obscuring the original exception
+            // or escalating it into a hardware reset.
+            unsafe {
+                core::arch::asm!("cli", options(nomem, nostack));
+            }
+            if tf.vector == 8 {
+                println!(
+                    "DOUBLE FAULT on emergency IST stack (error_code = {:#x})",
+                    tf.error_code
+                );
+            }
             println!(
-                "Unhandled exception {} (error_code = {:#x}) @ {:#x}",
-                tf.vector, tf.error_code, tf.rip
+                "Unhandled exception {} (error_code = {:#x}) @ {:#x}\nRDI={:#x} RSI={:#x} RAX={:#x} RBX={:#x}\nRSP={:#x} RBP={:#x} RFLAGS={:#x}",
+                tf.vector,
+                tf.error_code,
+                tf.rip,
+                tf.usr[6],
+                tf.usr[5],
+                tf.usr[0],
+                tf.usr[3],
+                tf.rsp,
+                tf.usr[4],
+                tf.rflags,
             );
+            println!("FAIL-STOP: CPU halted; use a manual reset to leave this screen");
+            loop {
+                unsafe { core::arch::asm!("cli; hlt", options(nomem, nostack)) };
+            }
         }
     }
 }
@@ -109,7 +142,8 @@ fn handle_irq(vector: u8) {
         IdtVector::VIRT_IPI_VECTOR if !is_timer => {
             ipi::handle_virt_ipi();
         }
-        IdtVector::I8042_KEYBOARD_VECTOR if !is_timer => {}
+        // 0x21 is not permanently owned by a host keyboard: the guest may
+        // allocate it to PCI MSI. Legacy PIC is masked by hvisor already.
         IdtVector::APIC_SPURIOUS_VECTOR | IdtVector::APIC_ERROR_VECTOR if !is_timer => {}
         _ => {
             if vector >= 0x20 && this_cpu_data().vcpu_state.is_running() {
@@ -122,22 +156,41 @@ fn handle_irq(vector: u8) {
 
 fn handle_cpuid(arch_cpu: &mut ArchCpu) -> HvResult {
     use raw_cpuid::{cpuid, CpuIdResult};
-    // TODO: temporary hypervisor hack
-    let signature = unsafe { &*("ACRNACRNACRN".as_ptr() as *const [u32; 3]) };
+    // Do not advertise ACRN: Linux then replaces native TSC calibration with
+    // CPUID.40000010H (kHz), an ACRN ABI that hvisor does not implement.
+    let signature = [
+        u32::from_le_bytes(*b"hvis"),
+        u32::from_le_bytes(*b"orhv"),
+        u32::from_le_bytes(*b"isor"),
+    ];
     let cr4_flags = Cr4Flags::from_bits_truncate(arch_cpu.cr(4) as _);
     let regs = arch_cpu.regs_mut();
     let rax: Result<CpuIdEax, u32> = (regs.rax as u32).try_into();
     let mut res: CpuIdResult = cpuid!(regs.rax, regs.rcx);
 
-    if let Ok(function) = rax {
+    if (0x4000_0001..0x5000_0000).contains(&(regs.rax as u32)) {
+        // Unsupported hypervisor leaves must not fall through to native
+        // CPUID, which may return unrelated maximum-leaf data.
+        res = CpuIdResult { eax: 0, ebx: 0, ecx: 0, edx: 0 };
+    } else if let Ok(function) = rax {
         res = match function {
             CpuIdEax::FeatureInfo => {
                 let mut res = cpuid!(regs.rax, regs.rcx);
                 let mut ecx = FeatureInfoFlags::from_bits_truncate(res.ecx as _);
 
                 ecx.remove(FeatureInfoFlags::VMX);
-                // ecx.remove(FeatureInfoFlags::TSC_DEADLINE);
-                ecx.remove(FeatureInfoFlags::XSAVE);
+                // XSETBV is not virtualized and XCR0 is not switched by this
+                // x86 backend. Keep the entire XSAVE-dependent feature family
+                // hidden as one coherent CPUID contract. Advertising AVX while
+                // hiding XSAVE can make modern libc select code whose register
+                // state Linux never enabled.
+                ecx.remove(
+                    FeatureInfoFlags::XSAVE
+                        | FeatureInfoFlags::OSXSAVE
+                        | FeatureInfoFlags::AVX
+                        | FeatureInfoFlags::FMA
+                        | FeatureInfoFlags::F16C,
+                );
 
                 ecx.insert(FeatureInfoFlags::X2APIC);
                 ecx.insert(FeatureInfoFlags::HYPERVISOR);
@@ -155,28 +208,35 @@ fn handle_cpuid(arch_cpu: &mut ArchCpu) -> HvResult {
                 ecx.remove(ExtendedFeaturesEcx::WAITPKG);
                 res.ecx = ecx.bits() as _;
 
+                if regs.rcx == 0 {
+                    // AVX2 and MPX depend on extended state components that
+                    // are deliberately hidden above. Kaby Lake has no AVX-512,
+                    // so no additional AVX-512 leaf-7 bits need masking here.
+                    const AVX2: u32 = 1 << 5;
+                    const MPX_BNDREGS: u32 = 1 << 14;
+                    const MPX_BNDCSR: u32 = 1 << 15;
+                    res.ebx &= !(AVX2 | MPX_BNDREGS | MPX_BNDCSR);
+                }
+
                 res
             }
-            CpuIdEax::TscInfo => CpuIdResult {
-                eax: 1,                                                 // Numerator for TSC frequency
-                ebx: 1, // Denominator for TSC frequency
-                ecx: hpet::get_tsc_freq_mhz().unwrap_or(0) * 1_000_000, // TSC frequency in Hz
-                edx: 0, // Reserved, typically 0
+            CpuIdEax::ExtendedStateInfo => CpuIdResult {
+                // Leaf 0xd must not describe native XCR0/XSS state after
+                // CPUID.1:ECX.XSAVE has been hidden from the guest.
+                eax: 0,
+                ebx: 0,
+                ecx: 0,
+                edx: 0,
             },
-            CpuIdEax::ProcessorFrequencyInfo => {
-                if let Some(freq_mhz) = hpet::get_tsc_freq_mhz() {
-                    CpuIdResult {
-                        eax: freq_mhz,
-                        ebx: freq_mhz,
-                        ecx: freq_mhz,
-                        edx: 0,
-                    }
-                } else {
-                    cpuid!(regs.rax, regs.rcx)
-                }
+            // The guest reads the physical TSC directly: there is no VMCS TSC
+            // offset or scaling.  Preserve the matching hardware ratio,
+            // crystal frequency, base/max frequency and 100 MHz bus frequency
+            // instead of synthesizing inconsistent CPUID.15H/16H values.
+            CpuIdEax::TscInfo | CpuIdEax::ProcessorFrequencyInfo => {
+                cpuid!(regs.rax, regs.rcx)
             }
             CpuIdEax::HypervisorInfo => CpuIdResult {
-                eax: CpuIdEax::HypervisorFeatures as u32,
+                eax: CpuIdEax::HypervisorInfo as u32,
                 ebx: signature[0],
                 ecx: signature[1],
                 edx: signature[2],
@@ -340,10 +400,7 @@ fn handle_msr_read(arch_cpu: &mut ArchCpu) -> HvResult {
 
     if let Ok(msr) = Msr::try_from(rcx) {
         let res = if msr == IA32_APIC_BASE {
-            let mut apic_base = unsafe { IA32_APIC_BASE.read() };
-            // info!("APIC BASE: {:x}", apic_base);
-            apic_base |= 1 << 11 | 1 << 10; // enable xAPIC and x2APIC
-            Ok(apic_base)
+            Ok(arch_cpu.virt_lapic.guest.base)
         } else if VirtLocalApic::msr_range().contains(&rcx) {
             arch_cpu.virt_lapic.rdmsr(msr)
         } else {
@@ -372,7 +429,12 @@ fn handle_msr_write(arch_cpu: &mut ArchCpu) -> HvResult {
     debug!("VM exit: WRMSR({:#x}) <- {:#x}", rcx, value);
 
     let res = if msr == IA32_APIC_BASE {
-        Ok(()) // ignore
+        if arch_cpu.virt_lapic.guest.set_base(value) {
+            info!("guest APIC mode/base={:#x}", arch_cpu.virt_lapic.guest.base);
+            Ok(())
+        } else {
+            return hv_result_err!(EINVAL);
+        }
     } else if VirtLocalApic::msr_range().contains(&rcx) || msr == IA32_TSC_DEADLINE {
         arch_cpu.virt_lapic.wrmsr(msr, value)
     } else {
@@ -391,12 +453,24 @@ fn handle_msr_write(arch_cpu: &mut ArchCpu) -> HvResult {
 
 fn handle_s2pt_violation(arch_cpu: &mut ArchCpu, exit_info: &VmxExitInfo) -> HvResult {
     let fault_info = Stage2PageFaultInfo::new()?;
-    mmio_handle_access(&mut MMIOAccess {
+    let result = mmio_handle_access(&mut MMIOAccess {
         address: fault_info.fault_guest_paddr,
         size: 0,
         is_write: fault_info.access_flags.contains(MemFlags::WRITE),
         value: 0,
-    })?;
+    });
+    if let Err(error) = result {
+        // Keep the fault address visible instead of letting the caller's full
+        // ArchCpu dump scroll the useful MMIO diagnostic off the screen.
+        panic!(
+            "EPT/MMIO FAILURE\nGPA={:#x} RIP={:#x}\naccess={:?} qualification={:#x}\nerror={:?}",
+            fault_info.fault_guest_paddr,
+            exit_info.guest_rip,
+            fault_info.access_flags,
+            VmcsReadOnlyNW::EXIT_QUALIFICATION.read().unwrap_or(0),
+            error
+        );
+    }
 
     Ok(())
 }
@@ -447,6 +521,9 @@ pub fn handle_vmexit(arch_cpu: &mut ArchCpu) -> HvResult {
             res.err()
         );
     }
+
+    #[cfg(intel_vtd)]
+    crate::device::iommu::check_faults();
 
     Ok(())
 }

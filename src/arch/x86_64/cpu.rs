@@ -67,6 +67,7 @@ const AP_START_PAGE_IDX: u8 = 6;
 const AP_START_PAGE_PADDR: PhysAddr = AP_START_PAGE_IDX as usize * PAGE_SIZE;
 
 static VMXON_DONE: AtomicU32 = AtomicU32::new(0);
+const VMXON_WAIT_TIMEOUT_NS: u64 = 5_000_000_000;
 
 global_asm!(
     include_str!("ap_start.S"),
@@ -228,6 +229,7 @@ impl ArchCpu {
 
         this_cpu_data().vcpu_state.store(VcpuState::Stopped);
         self.activate_vmx().unwrap();
+        info!("CPU{}: VMXON complete for parking VM", self.cpuid);
 
         // info!("idle! cpuid: {:x}", self.cpuid);
 
@@ -249,10 +251,12 @@ impl ArchCpu {
         });
 
         self.setup_vmcs(0, true).unwrap();
+        info!("CPU{}: parking VMCS ready", self.cpuid);
         self.host_stack_top = (core_end() + (self.cpuid + 1) * PER_CPU_SIZE) as _;
 
         unsafe {
             PARKING_MEMORY_SET.get().unwrap().activate();
+            info!("CPU{}: entering parking VM", self.cpuid);
             self.vmx_launch();
         }
     }
@@ -282,6 +286,7 @@ impl ArchCpu {
 
         per_cpu.vcpu_state.store(VcpuState::Running);
         self.activate_vmx().unwrap();
+        info!("CPU{}: VMXON complete for Zone0", self.cpuid);
 
         if !per_cpu.boot_cpu {
             if let Some(ipi_info) = ipi::get_ipi_info(self.cpuid) {
@@ -292,23 +297,47 @@ impl ArchCpu {
         }
 
         self.setup_vmcs(per_cpu.cpu_on_entry, false).unwrap();
+        info!("CPU{}: Zone0 VMCS ready", self.cpuid);
         per_cpu.activate_gpm();
+        info!("CPU{}: Zone0 EPT active", self.cpuid);
 
         if per_cpu.boot_cpu {
             // must be called after activate_gpm()
             #[cfg(intel_vtd)]
-            iommu::activate();
+            {
+                info!("CPU{}: enabling VT-d DMA translation", self.cpuid);
+                iommu::activate();
+                info!("CPU{}: VT-d DMA translation enabled", self.cpuid);
+            }
             self.guest_regs = self.vm_launch_guest_regs.clone();
         }
 
-        while VMXON_DONE.load(Ordering::Acquire) < unsafe { consts::MAX_CPU_NUM } as u32 - 1 {
+        let vmxon_wait_start = hpet::current_time_nanos();
+        info!(
+            "CPU{}: waiting for VMXON barrier ({}/{})",
+            self.cpuid,
+            VMXON_DONE.load(Ordering::Acquire),
+            consts::MAX_CPU_NUM
+        );
+        while VMXON_DONE.load(Ordering::Acquire) < consts::MAX_CPU_NUM as u32 {
+            if hpet::current_time_nanos().wrapping_sub(vmxon_wait_start)
+                > VMXON_WAIT_TIMEOUT_NS
+            {
+                panic!(
+                    "VMXON barrier timeout: ready {}/{}",
+                    VMXON_DONE.load(Ordering::Acquire),
+                    consts::MAX_CPU_NUM
+                );
+            }
             core::hint::spin_loop();
         }
+        info!("CPU{}: VMXON barrier complete", self.cpuid);
 
         self.host_stack_top = (core_end() + (self.cpuid + 1) * PER_CPU_SIZE) as _;
 
         clear_vectors(self.cpuid);
 
+        info!("CPU{}: launching Zone0", self.cpuid);
         unsafe { self.vmx_launch() };
 
         loop {}
@@ -345,7 +374,13 @@ impl ArchCpu {
         unsafe { execute_vmxon(self.vmxon_region.start_paddr() as u64).unwrap() };
 
         self.vmx_on = true;
-        VMXON_DONE.fetch_add(1, Ordering::SeqCst);
+        let ready = VMXON_DONE.fetch_add(1, Ordering::SeqCst) + 1;
+        info!(
+            "CPU{}: physical VMXON ready ({}/{})",
+            self.cpuid,
+            ready,
+            consts::MAX_CPU_NUM
+        );
         Ok(())
     }
 
@@ -400,30 +435,43 @@ impl ArchCpu {
     }
 
     fn setup_vmcs_control(&mut self) -> HvResult {
-        // intercept NMI and external interrupts
+        // Zone0 owns these physical CPUs, so let physical NMIs reach its Linux
+        // kernel directly. Enabling NMI exiting requires a complete virtual-NMI
+        // queue, reinjection, and NMI-window implementation; treating exit reason
+        // 0 as an unhandled VM exit instead turns a normal NMI into a panic.
+        // External interrupts still exit so hvisor can route them through its
+        // interrupt-controller model.
         use PinbasedControls as PinCtrl;
         Vmcs::set_control(
             VmcsControl32::PINBASED_EXEC_CONTROLS,
             Msr::IA32_VMX_TRUE_PINBASED_CTLS,
             Msr::IA32_VMX_PINBASED_CTLS.read() as u32,
-            (PinCtrl::NMI_EXITING | PinCtrl::EXTERNAL_INTERRUPT_EXITING).bits(),
-            0,
+            PinCtrl::EXTERNAL_INTERRUPT_EXITING.bits(),
+            PinCtrl::NMI_EXITING.bits(),
         )?;
 
-        // use I/O bitmaps and MSR bitmaps, activate secondary controls,
-        // disable CR3 load/store interception
+        // Let guest HLT enter the architectural halted state. External
+        // interrupts still cause VM exits through the pin-based control above,
+        // so hvisor can queue/inject the interrupt and wake the guest. Trapping
+        // HLT and merely advancing RIP turns Linux's idle loop into a busy loop
+        // and can starve its clock-event/scheduler progress on bare metal.
+        //
+        // Use I/O bitmaps and MSR bitmaps, activate secondary controls, and
+        // disable CR3 load/store interception.
         use PrimaryControls as CpuCtrl;
         Vmcs::set_control(
             VmcsControl32::PRIMARY_PROCBASED_EXEC_CONTROLS,
             Msr::IA32_VMX_TRUE_PROCBASED_CTLS,
             Msr::IA32_VMX_PROCBASED_CTLS.read() as u32,
-            (CpuCtrl::HLT_EXITING
-                // | CpuCtrl::RDTSC_EXITING 
-                | CpuCtrl::USE_IO_BITMAPS
+            (CpuCtrl::USE_IO_BITMAPS
+                // | CpuCtrl::RDTSC_EXITING
                 | CpuCtrl::USE_MSR_BITMAPS
                 | CpuCtrl::SECONDARY_CONTROLS)
                 .bits(),
-            (CpuCtrl::CR3_LOAD_EXITING | CpuCtrl::CR3_STORE_EXITING).bits(),
+            (CpuCtrl::HLT_EXITING
+                | CpuCtrl::CR3_LOAD_EXITING
+                | CpuCtrl::CR3_STORE_EXITING)
+                .bits(),
         )?;
 
         // enable EPT, RDTSCP, INVPCID, and unrestricted guest

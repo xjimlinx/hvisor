@@ -195,6 +195,7 @@ struct ModRM {
     pub _mod: u32,
     pub reg_opcode: u32,
     pub rm: u32,
+    pub rex: u8,
 }
 
 impl ModRM {
@@ -207,6 +208,7 @@ impl ModRM {
             _mod: byte.get_bits(6..=7) as _,
             reg_opcode,
             rm: byte.get_bits(0..=2) as _,
+            rex: rex.bits(),
         }
     }
 
@@ -215,45 +217,16 @@ impl ModRM {
     }
 
     pub fn get_modrm(&self, inst: &Vec<u8>, disp_id: usize) -> Option<OprandType> {
-        let reg: RmReg = self.rm.try_into().unwrap();
-        let mut reg_val = reg.read().unwrap();
-        // TODO: SIB
-        match self._mod {
-            0 => Some(OprandType::Gpa {
-                gpa: gva_to_gpa(reg_val as _).unwrap(),
-                len: 0,
-            }),
-            1 => {
-                let mut buf = [0u8; 1];
-                buf[0..1].copy_from_slice(&inst[disp_id..disp_id + 1]);
-                let disp_8 = i8::from_ne_bytes(buf);
-                if disp_8 > 0 {
-                    reg_val += (disp_8 as u64);
-                } else {
-                    reg_val -= ((-disp_8) as u64);
-                }
-                Some(OprandType::Gpa {
-                    gpa: gva_to_gpa(reg_val as _).unwrap(),
-                    len: 1,
-                })
-            }
-            2 => {
-                let mut buf = [0u8; 4];
-                buf[0..4].copy_from_slice(&inst[disp_id..disp_id + 4]);
-                let disp_32 = i32::from_ne_bytes(buf);
-                if disp_32 > 0 {
-                    reg_val += (disp_32 as u64);
-                } else {
-                    reg_val -= ((-disp_32) as u64);
-                }
-                Some(OprandType::Gpa {
-                    gpa: gva_to_gpa(reg_val as _).unwrap(),
-                    len: 4,
-                })
-            }
-            3 => Some(OprandType::Reg { reg, len: 0 }),
-            _ => None,
+        if self._mod == 3 {
+            let id = self.rm + if self.rex & 1 != 0 { 8 } else { 0 };
+            return Some(OprandType::Reg { reg: id.try_into().ok()?, len: 0 });
         }
+        let modrm = ((self._mod << 6) | self.rm) as u8;
+        let rip = VmcsGuestNW::RIP.read().ok()? as u64;
+        let (gva, len) = super::mmio_address::decode(modrm, self.rex,
+            inst.get(disp_id..)?, rip.wrapping_add(disp_id as u64),
+            |id| RmReg::try_from(id as u32).unwrap().read().unwrap())?;
+        Some(OprandType::Gpa { gpa: gva_to_gpa(gva as usize).ok()?, len })
     }
 }
 
@@ -379,8 +352,7 @@ fn emulate_inst(
     let mut rex = RexPrefixLow::from_bits_truncate(0);
     if inst[cur_id].get_bits(4..=7) == REX_PREFIX_HIGH {
         rex = RexPrefixLow::from_bits_truncate(inst[cur_id].get_bits(0..=3));
-        // we haven't implemented other situations yet
-        assert!(rex == RexPrefixLow::REGISTERS);
+        if rex.contains(RexPrefixLow::OPERAND_WIDTH) { size = 8; }
         cur_id += 1;
     }
 
@@ -426,7 +398,7 @@ fn emulate_inst(
                         mmio.size = size;
                         mmio.value = src_val as _;
 
-                        handler(mmio, base);
+                        handler(mmio, base)?;
                     }
                     _ => {}
                 }
@@ -454,7 +426,7 @@ fn emulate_inst(
                         mmio.value = 0;
                         // info!("src_val: {:x}", gpa);
 
-                        handler(mmio, base);
+                        handler(mmio, base)?;
                         mmio.value as u64
                     }
                 };
@@ -506,7 +478,7 @@ fn emulate_inst(
                         mmio.value = 0;
                         // info!("src_val: {:x}", gpa);
 
-                        handler(mmio, base);
+                        handler(mmio, base)?;
                         mmio.value as u64
                     }
                 };
@@ -534,7 +506,7 @@ pub fn instruction_emulator(handler: &MMIOHandler, mmio: &mut MMIOAccess, base: 
     let rip_hpa = gpa_to_hpa(gva_to_gpa(VmcsGuestNW::RIP.read()?)?)? as *const u8;
     let inst = unsafe { from_raw_parts(rip_hpa, 15) }.to_vec();
 
-    let len = emulate_inst(&inst, handler, mmio, base).unwrap();
+    let len = emulate_inst(&inst, handler, mmio, base)?;
     // info!("rip_hpa: {:?}, inst: {:x?}, len: {:x}", rip_hpa, inst, len);
 
     this_cpu_data().arch_cpu.advance_guest_rip(len as _)?;

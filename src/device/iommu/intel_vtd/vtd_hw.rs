@@ -16,7 +16,7 @@
 
 use crate::{
     arch::{acpi, hpet::current_time_nanos},
-    memory::{addr::virt_to_phys, Frame, HostPhysAddr},
+    memory::{Frame, HostPhysAddr},
     zone::this_zone_id,
 };
 use ::acpi::sdt::Signature;
@@ -27,6 +27,7 @@ use core::{
     hint::spin_loop,
     mem::size_of,
     ptr::{read_volatile, write_volatile},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
     usize,
 };
 use dma_remap_reg::*;
@@ -71,8 +72,12 @@ mod dma_remap_reg {
     pub(super) const DMAR_GSTS_REG: usize = 0x1c;
     /// Root Table Address Register
     pub(super) const DMAR_RTADDR_REG: usize = 0x20;
+    /// Fault Status Register
+    pub(super) const DMAR_FSTS_REG: usize = 0x34;
     /// Fault Event Control Register
     pub(super) const DMAR_FECTL_REG: usize = 0x38;
+    /// Invalidation Queue Head Register
+    pub(super) const DMAR_IQH_REG: usize = 0x80;
     /// Invalidation Queue Tail Register
     pub(super) const DMAR_IQT_REG: usize = 0x88;
     /// Invalidation Queue Address Register
@@ -82,6 +87,23 @@ mod dma_remap_reg {
 }
 
 static VTD: Once<Mutex<Vtd>> = Once::new();
+static LAST_FAULT_CHECK_NS: AtomicU64 = AtomicU64::new(0);
+static FAULT_REPORT_COUNT: AtomicUsize = AtomicUsize::new(0);
+const MAX_FAULT_REPORTS: usize = 16;
+const PCI_DMA_DRAIN_NS: u64 = 100_000_000;
+
+const PCI_COMMAND_OFFSET: usize = 0x04;
+const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+const PCI_COMMAND_INTX_DISABLE: u16 = 1 << 10;
+const PCI_STATUS_OFFSET: usize = 0x06;
+const PCI_STATUS_CAPABILITIES_LIST: u16 = 1 << 4;
+const PCI_CLASS_REVISION_OFFSET: usize = 0x08;
+const PCI_HEADER_TYPE_OFFSET: usize = 0x0e;
+const PCI_BAR0_OFFSET: usize = 0x10;
+const PCI_CAPABILITIES_PTR_OFFSET: usize = 0x34;
+const PCI_SECONDARY_BUS_OFFSET: usize = 0x19;
+const PCI_CAP_ID_MSI: u8 = 0x05;
+const PCI_CAP_ID_MSIX: u8 = 0x11;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug)]
@@ -144,6 +166,7 @@ struct VtdDevice {
 }
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 struct DmarEntry {
     lo_64: u64,
     hi_64: u64,
@@ -157,6 +180,9 @@ struct Vtd {
     root_table: Frame,
     context_tables: BTreeMap<u8, Frame>,
     qi_queue: Frame,
+    // Device-written completion storage must outlive every submission,
+    // including a timed-out request. Do not use a stack-local DMA target.
+    qi_completion: Frame,
     ir_table: Frame,
     /// cache value of DMAR_GCMD_REG
     gcmd: GcmdFlags,
@@ -166,6 +192,12 @@ struct Vtd {
 
 impl Vtd {
     fn activate(&mut self) {
+        self.quiesce_unassigned_pci_endpoints();
+        self.wait_for_pci_dma_drain();
+        // A request issued before Bus Master was cleared may finish during the
+        // drain interval.  Start the actual translation test with clean fault
+        // records so it cannot hide a later AHCI fault.
+        self.clear_stale_faults();
         self.activate_dma_translation();
     }
 
@@ -189,6 +221,8 @@ impl Vtd {
 
     fn activate_qi(&mut self) {
         self.qi_queue_hpa = self.qi_queue.start_paddr();
+        assert_eq!(size_of::<DmarEntry>(), QI_INV_ENTRY_SIZE);
+        flush_cache_range(self.qi_queue_hpa, INVALIDATION_QUEUE_SIZE);
         self.mmio_write_u64(DMAR_IQA_REG, self.qi_queue_hpa as u64);
         self.mmio_write_u32(DMAR_IQT_REG, 0);
 
@@ -217,6 +251,10 @@ impl Vtd {
             let context_table = Frame::new_zero().unwrap();
             let context_table_hpa = context_table.start_paddr();
 
+            // Publish zero/non-present entries too, before publishing the
+            // parent pointer to a non-coherent remapping unit.
+            flush_cache_range(context_table_hpa, 4096);
+
             // set context-table pointer
             root_entry_low.set_bits(12..=63, context_table_hpa.get_bits(12..=63) as _);
             // set present
@@ -239,6 +277,14 @@ impl Vtd {
             context_entry.set_bits(12..=63, zone_s2pt_hpa.get_bits(12..=63) as _);
             // present
             context_entry.set_bit(0, true);
+            info!(
+                "VT-d context {:02x}:{:02x}.{}: domain={}, s2pt={:#x}",
+                bus,
+                dev_func >> 3,
+                dev_func & 0x7,
+                zone_id,
+                zone_s2pt_hpa
+            );
         } else {
             context_entry.set_bits(0..=127, 0);
         }
@@ -305,7 +351,8 @@ impl Vtd {
 
     fn init(&mut self) {
         self.check_capability();
-        self.set_interrupt();
+        self.mask_fault_interrupt();
+        self.clear_stale_faults();
         self.set_root_table();
         self.activate_qi();
 
@@ -346,39 +393,73 @@ impl Vtd {
     }
 
     fn issue_qi_request(&mut self, entry: DmarEntry) {
-        let mut qi_status: u32 = 0;
-        let qi_status_ptr = &qi_status as *const u32;
-
+        // Vtd is locked by the caller; each submission waits for completion,
+        // so at most two descriptors are outstanding in the 256-entry ring.
+        let status_hpa = self.qi_completion.start_paddr();
+        let status_ptr = status_hpa as *mut u32;
+        unsafe { write_volatile(status_ptr, INV_STATUS_INCOMPLETED as u32) };
+        flush_cache_range(status_hpa, size_of::<u32>());
+        let first = self.qi_tail;
         unsafe {
-            let mut invalidate_desc = &mut *((self.qi_queue_hpa + self.qi_tail) as *mut DmarEntry);
-            invalidate_desc.hi_64 = entry.hi_64;
-            invalidate_desc.lo_64 = entry.lo_64;
+            write_volatile((self.qi_queue_hpa + first) as *mut DmarEntry, entry);
         }
         self.qi_tail = (self.qi_tail + QI_INV_ENTRY_SIZE) % INVALIDATION_QUEUE_SIZE;
+        let second = self.qi_tail;
         unsafe {
-            let mut invalidate_desc = &mut *((self.qi_queue_hpa + self.qi_tail) as *mut DmarEntry);
-            invalidate_desc.hi_64 = virt_to_phys(qi_status_ptr as usize) as u64;
-            invalidate_desc.lo_64 = INV_WAIT_DESC_LOWER;
+            write_volatile((self.qi_queue_hpa + second) as *mut DmarEntry, DmarEntry {
+                lo_64: INV_WAIT_DESC_LOWER,
+                hi_64: status_hpa as u64,
+            });
         }
         self.qi_tail = (self.qi_tail + QI_INV_ENTRY_SIZE) % INVALIDATION_QUEUE_SIZE;
-
-        qi_status = INV_STATUS_INCOMPLETED as u32;
+        // Flush separately: the pair can wrap at the end of the ring.
+        flush_cache_range(self.qi_queue_hpa + first, QI_INV_ENTRY_SIZE);
+        flush_cache_range(self.qi_queue_hpa + second, QI_INV_ENTRY_SIZE);
         self.mmio_write_u32(DMAR_IQT_REG, self.qi_tail as _);
 
         let start_tick = current_time_nanos();
-        while (qi_status != INV_STATUS_COMPLETED as _) {
-            if (current_time_nanos() - start_tick > 1000000) {
-                error!("issue qi request failed!");
+        loop {
+            // A dedicated frame prevents invalidating unrelated live data.
+            flush_cache_range(status_hpa, size_of::<u32>());
+            if unsafe { read_volatile(status_ptr) } == INV_STATUS_COMPLETED as u32 {
                 break;
             }
-            unsafe {
-                asm!("pause", options(nostack, preserves_flags));
-            }
+            let faults = self.mmio_read_u32(DMAR_FSTS_REG);
+            assert_eq!(faults & ((1 << 4) | (1 << 5) | (1 << 6)), 0,
+                "VT-d queued invalidation error: FSTS={:#x}", faults);
+            assert!(current_time_nanos().wrapping_sub(start_tick) <= 1_000_000_000,
+                "VT-d queued invalidation timeout: head={:#x} tail={:#x} FSTS={:#x}",
+                self.mmio_read_u64(DMAR_IQH_REG), self.qi_tail, faults);
+            spin_loop();
         }
     }
 
-    fn set_interrupt(&mut self) {
-        self.mmio_write_u32(DMAR_FECTL_REG, 0);
+    fn mask_fault_interrupt(&mut self) {
+        // No VT-d fault-event vector/handler is installed yet.  Leaving the
+        // event unmasked with FEADDR/FEDATA unset can route faults to an
+        // undefined destination.  Poll FSTS/FRCD from VM-exit instead.
+        self.mmio_write_u32(DMAR_FECTL_REG, 1 << 31);
+    }
+
+    fn clear_stale_faults(&self) {
+        let fsts = self.mmio_read_u32(DMAR_FSTS_REG);
+        if fsts == 0 {
+            return;
+        }
+
+        let cap = self.mmio_read_u64(DMAR_CAP_REG);
+        let fault_record_offset = (((cap >> 24) & 0x3ff) as usize) * 16;
+        let fault_record_count = (((cap >> 40) & 0xff) as usize) + 1;
+        warn!("clearing stale VT-d fault state: fsts={:#010x}", fsts);
+        for index in 0..fault_record_count {
+            let high_offset = fault_record_offset + index * 16 + 8;
+            if self.mmio_read_u64(high_offset).get_bit(63) {
+                // FRCD.F is the high dword's write-one-to-clear bit 31.
+                self.mmio_write_u64(high_offset, 1 << 63);
+            }
+        }
+        // Clear the write-one-to-clear status bits; read-only bits are ignored.
+        self.mmio_write_u32(DMAR_FSTS_REG, fsts);
     }
 
     fn set_interrupt_remap_table(&mut self) {
@@ -395,6 +476,7 @@ impl Vtd {
     }
 
     fn set_root_table(&mut self) {
+        flush_cache_range(self.root_table.start_paddr(), 4096);
         self.mmio_write_u64(DMAR_RTADDR_REG, self.root_table.start_paddr() as _);
         self.mmio_write_u32(DMAR_GCMD_REG, (self.gcmd | GcmdFlags::SRTP).bits());
 
@@ -402,6 +484,18 @@ impl Vtd {
     }
 
     fn fill_dma_translation_tables(&mut self, zone_id: usize, zone_s2pt_hpa: HostPhysAddr) {
+        let ecap = self.mmio_read_u64(DMAR_ECAP_REG);
+        if !ecap.get_bit(0) {
+            // ECAP.C=0 means DMA-remapping page-table walks are not cache
+            // coherent.  Zone0's EPT hierarchy has already been built with
+            // normal cached CPU stores, so make the entire hierarchy visible
+            // before publishing its root in context entries.  This broad
+            // one-shot synchronization is intentional for bring-up; later
+            // map/unmap updates still need range-specific writeback.
+            info!("VT-d ECAP.C=0: writing back cached DMA page tables");
+            unsafe { asm!("wbinvd", options(nostack, preserves_flags)) };
+        }
+
         let bdfs: Vec<(u8, u8)> = self
             .devices
             .iter()
@@ -415,13 +509,253 @@ impl Vtd {
         self.invalid_iotlb(zone_id as _);
     }
 
+    fn quiesce_unassigned_pci_endpoints(&mut self) {
+        // Walk every reachable bus from each ECAM root.  Merely hiding a PCI
+        // function from Zone0 does not stop DMA left active by firmware.
+        for root in crate::platform::ROOT_PCI_CONFIG.iter() {
+            if root.ecam_base == 0 {
+                continue;
+            }
+
+            let mut pending = Vec::new();
+            let mut seen = [false; 256];
+            pending.push(root.bus_range_begin as u8);
+
+            while let Some(bus) = pending.pop() {
+                if seen[bus as usize] {
+                    continue;
+                }
+                seen[bus as usize] = true;
+
+                for device in 0u8..32 {
+                    let function0 = pci_ecam_function(root.ecam_base as usize, bus, device, 0);
+                    if unsafe { read_volatile(function0 as *const u16) } == 0xffff {
+                        continue;
+                    }
+                    let header_type =
+                        unsafe { read_volatile((function0 + PCI_HEADER_TYPE_OFFSET) as *const u8) };
+                    let function_count = if header_type & 0x80 != 0 { 8 } else { 1 };
+
+                    for function in 0u8..function_count {
+                        let config =
+                            pci_ecam_function(root.ecam_base as usize, bus, device, function);
+                        if unsafe { read_volatile(config as *const u16) } == 0xffff {
+                            continue;
+                        }
+
+                        let class_revision = unsafe {
+                            read_volatile((config + PCI_CLASS_REVISION_OFFSET) as *const u32)
+                        };
+                        let base_class = (class_revision >> 24) as u8;
+                        let sub_class = (class_revision >> 16) as u8;
+                        let prog_if = (class_revision >> 8) as u8;
+                        if base_class == 0x06 && sub_class == 0x04 {
+                            let secondary = unsafe {
+                                read_volatile((config + PCI_SECONDARY_BUS_OFFSET) as *const u8)
+                            };
+                            if secondary != 0 && !seen[secondary as usize] {
+                                pending.push(secondary);
+                            }
+                            continue;
+                        }
+
+                        let bdf = ((bus as u64) << 8) | ((device as u64) << 3) | function as u64;
+                        if self.devices.contains_key(&bdf) {
+                            if base_class == 0x0c && sub_class == 0x03 && prog_if == 0x30 {
+                                // Assigned does not mean quiescent: firmware may
+                                // still have rings containing host addresses.
+                                // Stop before switching the DMA address space.
+                                self.stop_xhci(config, bus, device, function);
+                                self.mask_pci_interrupts(config);
+                                let ptr = (config + PCI_COMMAND_OFFSET) as *mut u16;
+                                let old = unsafe { read_volatile(ptr) };
+                                unsafe {
+                                    write_volatile(ptr, (old & !PCI_COMMAND_BUS_MASTER) | PCI_COMMAND_INTX_DISABLE);
+                                    asm!("mfence", options(nostack, preserves_flags));
+                                }
+                                let new = unsafe { read_volatile(ptr) };
+                                assert_eq!(new & PCI_COMMAND_BUS_MASTER, 0,
+                                    "assigned xHCI still bus mastering before VT-d activation");
+                                info!("assigned xHCI quiesced {:02x}:{:02x}.{} cmd={:04x}->{:04x}",
+                                    bus, device, function, old, new);
+                            }
+                            continue;
+                        }
+
+                        if base_class == 0x0c && sub_class == 0x03 && prog_if == 0x30 {
+                            self.stop_xhci(config, bus, device, function);
+                        }
+                        self.mask_pci_interrupts(config);
+
+                        let command_ptr = (config + PCI_COMMAND_OFFSET) as *mut u16;
+                        let command = unsafe { read_volatile(command_ptr) };
+                        let disabled_command =
+                            (command & !PCI_COMMAND_BUS_MASTER) | PCI_COMMAND_INTX_DISABLE;
+                        if command != disabled_command {
+                            unsafe {
+                                write_volatile(command_ptr, disabled_command);
+                                asm!("mfence", options(nostack, preserves_flags));
+                            };
+                            let command_after = unsafe { read_volatile(command_ptr) };
+                            warn!(
+                                "PCI QUIESCE {:02x}:{:02x}.{} cmd {:04x}->{:04x}",
+                                bus,
+                                device,
+                                function,
+                                command,
+                                command_after
+                            );
+                            if command_after & PCI_COMMAND_BUS_MASTER != 0 {
+                                error!(
+                                    "PCI BME STUCK {:02x}:{:02x}.{}",
+                                    bus, device, function
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn mask_pci_interrupts(&self, config: usize) {
+        let status = unsafe { read_volatile((config + PCI_STATUS_OFFSET) as *const u16) };
+        if status & PCI_STATUS_CAPABILITIES_LIST == 0 {
+            return;
+        }
+
+        let mut pointer = unsafe {
+            read_volatile((config + PCI_CAPABILITIES_PTR_OFFSET) as *const u8) & !0x3
+        };
+        for _ in 0..48 {
+            if !(0x40..=0xfc).contains(&pointer) {
+                break;
+            }
+            let capability = config + pointer as usize;
+            let capability_id = unsafe { read_volatile(capability as *const u8) };
+            match capability_id {
+                PCI_CAP_ID_MSI => {
+                    let control = (capability + 2) as *mut u16;
+                    let value = unsafe { read_volatile(control) };
+                    unsafe { write_volatile(control, value & !1) };
+                }
+                PCI_CAP_ID_MSIX => {
+                    let control = (capability + 2) as *mut u16;
+                    let value = unsafe { read_volatile(control) };
+                    unsafe { write_volatile(control, (value & !(1 << 15)) | (1 << 14)) };
+                }
+                _ => {}
+            }
+            pointer = unsafe { read_volatile((capability + 1) as *const u8) & !0x3 };
+        }
+    }
+
+    fn stop_xhci(&self, config: usize, bus: u8, device: u8, function: u8) {
+        let bar_low = unsafe { read_volatile((config + PCI_BAR0_OFFSET) as *const u32) };
+        if bar_low & 1 != 0 {
+            return;
+        }
+        let mut bar = (bar_low & !0xf) as u64;
+        if (bar_low >> 1) & 0x3 == 0x2 {
+            let bar_high = unsafe {
+                read_volatile((config + PCI_BAR0_OFFSET + 4) as *const u32)
+            };
+            bar |= (bar_high as u64) << 32;
+        }
+        if bar == 0 {
+            return;
+        }
+
+        let capability_length = unsafe { read_volatile(bar as *const u8) } as usize;
+        let operational_base = bar as usize + capability_length;
+        let command_ptr = operational_base as *mut u32;
+        let status_ptr = (operational_base + 4) as *const u32;
+        let command = unsafe { read_volatile(command_ptr) };
+        if command & 1 != 0 {
+            unsafe { write_volatile(command_ptr, command & !1) };
+        }
+
+        let start = current_time_nanos();
+        while unsafe { read_volatile(status_ptr) } & 1 == 0 {
+            if current_time_nanos().wrapping_sub(start) >= 100_000_000 {
+                error!(
+                    "xHCI HALT TIMEOUT {:02x}:{:02x}.{} usbcmd={:#x} usbsts={:#x}",
+                    bus,
+                    device,
+                    function,
+                    unsafe { read_volatile(command_ptr) },
+                    unsafe { read_volatile(status_ptr) }
+                );
+                panic!("xHCI failed to halt before DMA address-space switch");
+            }
+            spin_loop();
+        }
+        info!("xHCI HALTED {:02x}:{:02x}.{}", bus, device, function);
+    }
+
+    fn wait_for_pci_dma_drain(&self) {
+        let start = current_time_nanos();
+        while current_time_nanos().wrapping_sub(start) < PCI_DMA_DRAIN_NS {
+            spin_loop();
+        }
+        info!("unassigned PCI DMA drain interval complete");
+    }
+
+    fn report_faults(&self) -> bool {
+        let fsts = self.mmio_read_u32(DMAR_FSTS_REG);
+        if fsts == 0 {
+            return false;
+        }
+
+        let cap = self.mmio_read_u64(DMAR_CAP_REG);
+        let fault_record_offset = (((cap >> 24) & 0x3ff) as usize) * 16;
+        let fault_record_count = (((cap >> 40) & 0xff) as usize) + 1;
+        error!(
+            "VT-d DMA fault: base={:#x}, fsts={:#010x}, records={}, fro={:#x}",
+            self.reg_base_hpa, fsts, fault_record_count, fault_record_offset
+        );
+        for index in 0..fault_record_count {
+            let offset = fault_record_offset + index * 16;
+            let lo = self.mmio_read_u64(offset);
+            let hi = self.mmio_read_u64(offset + 8);
+            if hi.get_bit(63) {
+                error!(
+                    "VT-d FRCD[{}]: sid={:02x}:{:02x}.{}, reason={:#04x}, addr={:#x}, hi={:#018x}, lo={:#018x}",
+                    index,
+                    ((hi & 0xffff) >> 8) as u8,
+                    ((hi & 0xff) >> 3) as u8,
+                    (hi & 0x7) as u8,
+                    ((hi >> 32) & 0xff) as u8,
+                    lo & !0xfff,
+                    hi,
+                    lo
+                );
+                // Release this record so a later requester (especially AHCI)
+                // can be captured rather than remaining hidden behind xHCI.
+                self.mmio_write_u64(offset + 8, 1 << 63);
+            }
+        }
+        self.mmio_write_u32(DMAR_FSTS_REG, fsts);
+        true
+    }
+
     fn wait(&mut self, mask: GstsFlags, cond: bool) {
+        const VTD_WAIT_TIMEOUT_NS: u64 = 1_000_000_000;
+        let start = current_time_nanos();
         loop {
             spin_loop();
-            if GstsFlags::from_bits_truncate(self.mmio_read_u32(DMAR_GSTS_REG)).contains(mask)
-                != cond
-            {
+            let status = self.mmio_read_u32(DMAR_GSTS_REG);
+            if GstsFlags::from_bits_truncate(status).contains(mask) != cond {
                 break;
+            }
+            if current_time_nanos().wrapping_sub(start) > VTD_WAIT_TIMEOUT_NS {
+                panic!(
+                    "VT-d status timeout: base={:#x}, gsts={:#x}, mask={:#x}, target_set={}",
+                    self.reg_base_hpa,
+                    status,
+                    mask.bits(),
+                    !cond
+                );
             }
         }
     }
@@ -488,7 +822,8 @@ fn parse_root_dmar() -> Mutex<Vtd> {
         devices: BTreeMap::new(),
         root_table: Frame::new_zero().unwrap(),
         context_tables: BTreeMap::new(),
-        qi_queue: Frame::new().unwrap(),
+        qi_queue: Frame::new_zero().unwrap(),
+        qi_completion: Frame::new_zero().unwrap(),
         ir_table: Frame::new().unwrap(),
         gcmd: GcmdFlags::empty(),
         qi_queue_hpa: 0,
@@ -528,10 +863,46 @@ pub fn flush(zone_id: usize, bus: u8, dev_func: u8) {
     VTD.get().unwrap().lock().flush(zone_id, bus, dev_func);
 }
 
-fn flush_cache_range(hpa: usize, size: usize) {
-    let mut i = 0usize;
-    while i < size {
-        unsafe { asm!("clflushopt [{addr}]", addr = in(reg) hpa + i) };
-        i += 64;
+/// Poll VT-d fault state at a low rate.  Fault interrupts remain masked until
+/// a real fault-event vector is installed, so this is the bring-up diagnostic
+/// path used from VM-exit.
+pub fn check_faults() {
+    if FAULT_REPORT_COUNT.load(Ordering::Relaxed) >= MAX_FAULT_REPORTS {
+        return;
     }
+
+    let now = current_time_nanos();
+    let last = LAST_FAULT_CHECK_NS.load(Ordering::Relaxed);
+    if now.wrapping_sub(last) < 100_000_000
+        || LAST_FAULT_CHECK_NS
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
+        return;
+    }
+
+    if VTD.get().unwrap().lock().report_faults() {
+        FAULT_REPORT_COUNT.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[inline]
+fn pci_ecam_function(ecam_base: usize, bus: u8, device: u8, function: u8) -> usize {
+    ecam_base + ((bus as usize) << 20) + ((device as usize) << 15) + ((function as usize) << 12)
+}
+
+fn flush_cache_range(hpa: usize, size: usize) {
+    if size == 0 {
+        return;
+    }
+    let end = hpa.checked_add(size).expect("cache flush range overflow");
+    let mut addr = hpa & !63usize;
+    while addr < end {
+        // CLFLUSH is available on the supported VMX platforms, unlike
+        // CLFLUSHOPT on older CPUs. Include partially covered cache lines.
+        unsafe { asm!("clflush [{addr}]", addr = in(reg) addr) };
+        addr = addr.checked_add(64).expect("cache flush alignment overflow");
+    }
+    // Order writeback/invalidation before both publication and status loads.
+    unsafe { asm!("mfence", options(nostack, preserves_flags)) };
 }
