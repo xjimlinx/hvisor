@@ -563,7 +563,8 @@ impl Vtd {
                         if self.devices.contains_key(&bdf) {
                             #[cfg(z270_minimal_acpi)]
                             if (bus == 5 && device == 0 && function == 0)
-                                || (bus == 0 && device == 0x1f && function == 3) {
+                                || (bus == 0 && device == 0x1f && function == 3)
+                                || (bus == 0 && device == 0x16 && function == 0) {
                                 // AX210/PCH audio must not retain firmware DMA/IRQ when
                                 // entering the translated Zone0 address space.
                                 self.mask_pci_interrupts(config);

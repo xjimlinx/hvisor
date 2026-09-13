@@ -23,6 +23,8 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                     NonCacheable, ReadWrite, 0, 0xDF200000, 0xDF207FFF, 0, 0x8000)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDF34A000, 0xDF34A0FF, 0, 0x100)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDF34D000, 0xDF34DFFF, 0, 0x1000)
                 WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
                     0, 0xF000, 0xF01F, 0, 0x20)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
@@ -86,6 +88,7 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
             Device (XHC1) { Name (_ADR, 0x001C0000) }
             Device (HDA1) { Name (_ADR, 0x001D0000) }
             Device (SBUS) { Name (_ADR, 0x001E0000) }
+            Device (HECI) { Name (_ADR, 0x00160000) }
             Device (GFX0) { Name (_ADR, 0x001A0000) }
             Device (HDA0) { Name (_ADR, 0x001A0001) }
         }

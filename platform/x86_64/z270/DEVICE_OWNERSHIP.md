@@ -6,6 +6,23 @@
 
 ## 本轮实测更新
 
+继续接入结果：SMBus 00:1f.4→00:1e.0 已由 i801_smbus 接管，
+`i2c_i801.disable_features=0x10` 使用轮询，未执行用户态总线扫描或
+SPD/EEPROM 写操作。MEI 00:16.0→00:16.0 已由 mei_me 接管，
+/dev/mei0 权限 root 0600；未执行管理命令或固件更新。
+两项分别重启验证，plasmalogin active、失败服务0、网络地址重新确认。
+
+当前保留项是 LPC 00:1f.0、PMC 00:1f.2 与六个桥，不作为直通清单
+里的“漏项”。静态检查见 pci_struct.rs 的 VirtualPciAccessBits::bridge：
+桥窗口/复位保护未完成；Linux 参考 lpc_ich_probe 会创建 GPIO/iTCO
+子设备，pmc_core_probe 涉及额外平台电源 MMIO。未核准这些访问前
+不开放其控制权；test-device-contract.py 对这些物理 BDF 增加拒绝断言。
+若要客体查看完整拓扑，应实现只读虚拟描述；若要平台控制，需要专门
+代理/访问白名单及跨 Zone 复位策略，不能仅再填一个 pci_dev!。
+
+最新 MEI ELF：871150a1fabe0cb8da6e5ceacf9a86e639c3e5071b650414ad50775997993ae3。
+部署前备份 hvisor-audit-20260913-gJtWDN（SMBus 已启用）。
+
 - AX210 已分配为 00:1b.0：iwlwifi 固件加载、自动关联、DHCP 地址获取
   正常；绑定 wlan0 ping 网关 10.31.0.1 两次成功。管理机直连其 Wi-Fi
   IPv4 曾报无路由，不宣称该入站路径已通过。

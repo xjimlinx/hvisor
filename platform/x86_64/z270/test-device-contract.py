@@ -55,8 +55,14 @@ assert "0x001AFFFF, 0x02, Zero, 0x11" in asl
 assert "OperationRegion" not in re.sub(r"//[^\n]*", "", asl)
 devices = re.findall(r"pci_dev!\((\d+), (\d+), (0x[0-9a-f]+), (\d+) => (\d+), (0x[0-9a-f]+), (\d+),", board)
 physical = [tuple(map(number, d[:4])) for d in devices]
+platform_reserved = {(0, 0, 0x1f, 0), (0, 0, 0x1f, 2),
+                     (0, 0, 1, 0), (0, 0, 0x1b, 0),
+                     (0, 0, 0x1c, 0), (0, 0, 0x1c, 4),
+                     (0, 0, 0x1c, 7), (0, 0, 0x1d, 0)}
+assert not platform_reserved.intersection(physical), "unsafe platform/bridge passthrough"
 virtual = [(number(d[0]), *map(number, d[4:])) for d in devices]
-assert len(devices) == 10
+assert len(devices) == 11
+assert "pci_dev!(0, 0, 0x16, 0 => 0, 0x16, 0," in board
 assert "pci_dev!(0, 0, 0x1f, 4 => 0, 0x1e, 0," in board
 assert "i2c_i801.disable_features=0x10" in cmdline
 assert "pci_dev!(0, 0, 0x1f, 3 => 0, 0x1d, 0," in board
