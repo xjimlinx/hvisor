@@ -48,9 +48,18 @@ These windows are mirrored in minimal ACPI; EPT maps memory windows UC for
 conservative bring-up. PEG0 AR01 INTx routes A-D are GSI 16-19. Firmware BAR
 relocation is not supported by this fixed board profile.
 
-Keep the NVIDIA module blacklist and multi-user boot initially. After reboot,
-first verify SSH/root/USB/network, then inspect `lspci -nnvv -s 00:1a` and load
-the installed proprietary 580xx driver manually with `modprobe nvidia`.
+The first GPU candidate failed before producing a journal; its photo shows
+an unhandled VM exit on parking CPUs, but not the reason. Live native BARs
+still match the mappings. The prior network guest journal proves nvidia loaded
+despite modprobe.blacklist, and native modules-load configuration requests
+nvidia-uvm. Thus the intended driver-free test was not actually isolated.
+
+This candidate uses kernel `module_blacklist` for the entire NVIDIA family,
+nouveau and snd_hda_intel, plus `panic=0`. It tests enumeration only: after
+reboot verify SSH/root/USB/network, `lspci -nnvv -s 00:1a`, and absence of
+these modules. Manual modprobe is also blocked for this boot. A later driver
+candidate must remove this kernel blacklist and control the userspace loaders
+before manually testing the installed proprietary 580xx driver.
 Acceptance requires `nvidia-smi`, GPU work and clean DMA/IRQ diagnostics;
 PCI enumeration or compilation alone is not success. No driver upgrade,
 desktop/KMS takeover, GPU reset, or automatic reboot is part of this candidate.

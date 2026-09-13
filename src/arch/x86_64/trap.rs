@@ -508,8 +508,14 @@ pub fn handle_vmexit(arch_cpu: &mut ArchCpu) -> HvResult {
         VmxExitReason::MSR_WRITE => handle_msr_write(arch_cpu),
         VmxExitReason::EPT_VIOLATION => handle_s2pt_violation(arch_cpu, &exit_info),
         _ => panic!(
-            "Unhandled VM-Exit reason {:?}:\n{:#x?}",
-            exit_info.exit_reason, arch_cpu
+            "Unhandled VM-Exit CPU{} reason={:?} raw={:#x} running={} RIP={:#x} RSP={:#x} qualification={:#x} intr={:#x} vectoring={:#x}",
+            this_cpu_id(), exit_info.exit_reason,
+            VmcsReadOnly32::EXIT_REASON.read().unwrap_or(u32::MAX),
+            this_cpu_data().vcpu_state.is_running(), exit_info.guest_rip,
+            VmcsGuestNW::RSP.read().unwrap_or(usize::MAX),
+            VmcsReadOnlyNW::EXIT_QUALIFICATION.read().unwrap_or(usize::MAX),
+            VmcsReadOnly32::VMEXIT_INTERRUPTION_INFO.read().unwrap_or(u32::MAX),
+            VmcsReadOnly32::IDT_VECTORING_INFO.read().unwrap_or(u32::MAX)
         ),
     };
 

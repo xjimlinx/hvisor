@@ -34,8 +34,16 @@ for start, size in windows:
 for function in (0, 1):
     assert f"pci_dev!(0, 1, 0x00, {function} => 0, 0x1a, {function}," in board
 assert "modprobe.blacklist=nvidia,nouveau" in board
+assert "module_blacklist=nvidia,nvidia_uvm,nvidia_modeset,nvidia_drm,nouveau,snd_hda_intel" in board
+assert "panic=0" in board
 assert "systemd.unit=multi-user.target" in board
 assert "0x001AFFFF, One, Zero, 0x11" in asl
 assert "0x001AFFFF, 0x02, Zero, 0x12" in asl
 assert "OperationRegion" not in re.sub(r"//[^\n]*", "", asl)
+devices = re.findall(r"pci_dev!\((\d+), (\d+), (0x[0-9a-f]+), (\d+) => (\d+), (0x[0-9a-f]+), (\d+),", board)
+physical = [tuple(map(number, d[:4])) for d in devices]
+virtual = [(number(d[0]), *map(number, d[4:])) for d in devices]
+assert len(devices) == 6
+assert len(set(physical)) == len(physical), "physical device assigned twice"
+assert len(set(virtual)) == len(virtual), "guest PCI BDF collision"
 print("PASS: GP102/HDMI BDFs, BARs, ACPI windows, GPA non-overlap, staged driver policy")
