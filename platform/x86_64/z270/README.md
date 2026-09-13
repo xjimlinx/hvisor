@@ -35,6 +35,16 @@ not included here. Keep their initrd length consistent with board.rs.
 
 ### GPU candidate (not yet hardware-verified)
 
+The driver-isolated build booted successfully over IPv6 SSH: root, USB
+keyboard/mouse and PPPoE worked; nvidia was rejected by the kernel blacklist.
+However guest lspci showed only the original four devices, not GPU/audio.
+This does not establish that driver autoload caused the earlier panic.
+The iterator had a concrete bridge-descent bug: upstream multifunction state
+advanced the child function to 1, skipping function 0. The next candidate
+starts each child bus at function 0; actual GPU visibility still needs reboot
+verification. A state-only harness exercising the real next() method covers
+multifunction bridge descent and ordinary endpoint function advancement.
+
 Physical `01:00.0/1` is presented as `00:1a.0/1`, keeping both functions in
 Zone0. The physical upstream bridge stays firmware-owned and hidden; no bridge
 reset or bus renumbering is requested. DMA contexts use physical requester IDs

@@ -2183,13 +2183,12 @@ impl<B: BarAllocator> PciIterator<B> {
 
             self.stack.push(bridge.clone());
 
-            if self.is_mulitple_function && self.function < MAX_FUNCTION {
-                // Device supports multiple functions and we haven't checked all functions yet
-                self.function += 1;
-                return;
-            }
-
+            // We are descending to a different bus/device, not advancing a
+            // function of the upstream bridge. Its multifunction state is
+            // saved in `bridge` for unwinding. Carrying it into the child
+            // skips function 0 (e.g. GP102) and exposes only its HDMI function.
             self.function = 0;
+            self.is_mulitple_function = false;
             return;
         }
 
