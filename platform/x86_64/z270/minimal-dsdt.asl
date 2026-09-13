@@ -22,6 +22,16 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
                     0, 0, 0, 0, 1)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDE000000, 0xDEFFFFFF, 0, 0x1000000)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    Prefetchable, ReadWrite, 0, 0xC0000000, 0xCFFFFFFF, 0, 0x10000000)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    Prefetchable, ReadWrite, 0, 0xD0000000, 0xD1FFFFFF, 0, 0x2000000)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDF080000, 0xDF083FFF, 0, 0x4000)
+                WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
+                    0, 0xE000, 0xE07F, 0, 0x80)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDF300000, 0xDF31FFFF, 0, 0x20000)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDF330000, 0xDF33FFFF, 0, 0x10000)
@@ -48,11 +58,18 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 Package () { 0x0019FFFF, Zero, Zero, 0x10 },
                 Package () { 0x0019FFFF, One, Zero, 0x11 },
                 Package () { 0x0019FFFF, 0x02, Zero, 0x12 },
-                Package () { 0x0019FFFF, 0x03, Zero, 0x13 }
+                Package () { 0x0019FFFF, 0x03, Zero, 0x13 },
+                // Native PEG0 AR01 routing, translated to guest slot 1a.
+                Package () { 0x001AFFFF, Zero, Zero, 0x10 },
+                Package () { 0x001AFFFF, One, Zero, 0x11 },
+                Package () { 0x001AFFFF, 0x02, Zero, 0x12 },
+                Package () { 0x001AFFFF, 0x03, Zero, 0x13 }
             })
             Device (SAT0) { Name (_ADR, 0x00170000) }
             Device (XHC0) { Name (_ADR, 0x00140000) }
             Device (GLAN) { Name (_ADR, 0x00190000) }
+            Device (GFX0) { Name (_ADR, 0x001A0000) }
+            Device (HDA0) { Name (_ADR, 0x001A0001) }
         }
         Device (HPET)
         {

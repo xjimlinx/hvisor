@@ -12,8 +12,8 @@ make ARCH=x86_64 BOARD=z270 MODE=release LOG=info elf
 ```
 
 Build-time ASL compilation supplies the minimal guest DSDT. Zone0 exposes one
-CPU, the host bridge, SATA AHCI, Intel PCH xHCI and I219-V; other devices remain
-unassigned. Guest Linux payloads are the existing Arch 6.18.50-2-lts files,
+CPU, the host bridge, SATA AHCI, Intel PCH xHCI, I219-V and GP102 with HDMI audio;
+other devices remain unassigned. Guest Linux payloads are the existing Arch 6.18.50-2-lts files,
 not included here. Keep their initrd length consistent with board.rs.
 
 ## Hardware verification, 2026-09-13
@@ -33,9 +33,33 @@ not included here. Keep their initrd length consistent with board.rs.
 
 ## Scope and known limits
 
+### GPU candidate (not yet hardware-verified)
+
+Physical `01:00.0/1` is presented as `00:1a.0/1`, keeping both functions in
+Zone0. The physical upstream bridge stays firmware-owned and hidden; no bridge
+reset or bus renumbering is requested. DMA contexts use physical requester IDs
+`0100/0101`, not guest BDFs. Assigned GPU functions have MSI/INTx masked and bus
+mastering cleared before the existing DMA drain/VT-d switch; memory decoding
+and firmware scanout remain enabled. This is not a full GPU reset protocol.
+
+Native inventory: GP102 BAR0 `de000000/01000000`, BAR1 `c0000000/10000000`,
+BAR3 `d0000000/02000000`, I/O `e000/80`, HDMI BAR0 `df080000/4000`.
+These windows are mirrored in minimal ACPI; EPT maps memory windows UC for
+conservative bring-up. PEG0 AR01 INTx routes A-D are GSI 16-19. Firmware BAR
+relocation is not supported by this fixed board profile.
+
+Keep the NVIDIA module blacklist and multi-user boot initially. After reboot,
+first verify SSH/root/USB/network, then inspect `lspci -nnvv -s 00:1a` and load
+the installed proprietary 580xx driver manually with `modprobe nvidia`.
+Acceptance requires `nvidia-smi`, GPU work and clean DMA/IRQ diagnostics;
+PCI enumeration or compilation alone is not success. No driver upgrade,
+desktop/KMS takeover, GPU reset, or automatic reboot is part of this candidate.
+The hvisor framebuffer console shares the GPU: do not enable KMS/desktop
+takeover before providing an independent hvisor logging channel.
+
 Normal Arch/GRUB and rollback boot files are maintained separately; this repo
-does not contain deployment credentials or boot artifacts. GPU and Wi-Fi
-passthrough are not enabled by this board profile. Guest APIC state supports the
+does not contain deployment credentials or boot artifacts. Wi-Fi remains
+unassigned; GPU support is experimental as described above. Guest APIC state supports the
 tested single-vCPU path, not full nested interrupt priority/level-triggered
 semantics or multi-vCPU xAPIC logical routing. The MMIO decoder is a limited
 MOV-family emulator, not a general x86 instruction emulator. Early xHCI tracing
