@@ -14,10 +14,8 @@ pub const ROOT_ZONE_BOOT_STACK: GuestPhysAddr = 0x7000;
 pub const ROOT_ZONE_ENTRY: u64 = 0x8000;
 pub const ROOT_ZONE_KERNEL_ADDR: u64 = 0x500_0000;
 
-// Minimal bring-up profile: expose only the BSP to Zone0. All remaining
-// physical threads still enter hvisor-owned parking VMs, so no AP runs outside
-// VMX control. Restore the wider mask only after single-vCPU Zone0 is stable.
-pub const ROOT_ZONE_CPUS: u64 = 1 << 0;
+// All eight hardware threads belong to Zone0; APs await virtual SIPI.
+pub const ROOT_ZONE_CPUS: u64 = 0xff;
 
 const ROOT_ZONE_RSDP_REGION: HvConfigMemoryRegion = HvConfigMemoryRegion {
     mem_type: MEM_TYPE_RAM,
@@ -46,12 +44,12 @@ const ROOT_ZONE_ACPI_REGION_ID: usize = 6;
 pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Keep the real generator path enabled after repairing the guest CPUID
 // contract. Keep warnings but disable systemd's source-location/debug flood.
-// nosmp also disables IO-APIC on x86. maxcpus=1 preserves interrupt routing.
+// Do not use nosmp/maxcpus: all assigned APs boot through virtual SIPI.
 // Bare-metal Wayland profile, validated with GP102 and Plasma Login.
 // Keep HDMI audio isolated until separately tested; preserve INFO in hvisor.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 maxcpus=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau,snd_hda_intel panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau,snd_hda_intel panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 20] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 22] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -98,10 +96,24 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 20] = [
         size: 0x6_0000_0000,
     },
     HvConfigMemoryRegion {
-        mem_type: MEM_TYPE_RESERVED,
+        // Native e820: System RAM through 0x86effffff, not firmware.
+        mem_type: MEM_TYPE_RAM,
         physical_start: 0x7_0000_0000,
         virtual_start: 0x7_0000_0000,
         size: 0x1_6f00_0000,
+    },
+    // Remaining native low-RAM fragments; avoid adjacent ACPI/NVS holes.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_RAM,
+        physical_start: 0x8461_2000,
+        virtual_start: 0x8461_2000,
+        size: 0x08c9_b000,
+    },
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_RAM,
+        physical_start: 0x8fba_2000,
+        virtual_start: 0x8fba_2000,
+        size: 0x0005_e000,
     },
     // Intel I219-V 00:1f.6 BAR0, kept at its real MMIO address.
     HvConfigMemoryRegion {

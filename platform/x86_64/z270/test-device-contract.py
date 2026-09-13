@@ -40,6 +40,16 @@ assert "nomodeset" not in board
 assert "panic=0" in board
 assert "systemd.unit=graphical.target" in board
 assert "hvisor.gpu=graphics" in board
+assert "pub const ROOT_ZONE_CPUS: u64 = 0xff;" in board
+cmdline = re.search(r'ROOT_ZONE_CMDLINE: &str = "([^"]+)"', board)[1]
+assert "maxcpus=" not in cmdline and "nosmp" not in cmdline
+assert any(r["physical_start"] == 0x700000000 and
+           r["size"] == 0x16f000000 for r in regions)
+for i, region in enumerate(regions):
+    for other in regions[i+1:]:
+        for key in ("physical_start", "virtual_start"):
+            assert not (region[key] < other[key] + other["size"] and
+                        other[key] < region[key] + region["size"]), "region overlap"
 assert "0x001AFFFF, One, Zero, 0x11" in asl
 assert "0x001AFFFF, 0x02, Zero, 0x12" in asl
 assert "OperationRegion" not in re.sub(r"//[^\n]*", "", asl)
