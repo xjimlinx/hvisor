@@ -562,8 +562,9 @@ impl Vtd {
                         let bdf = ((bus as u64) << 8) | ((device as u64) << 3) | function as u64;
                         if self.devices.contains_key(&bdf) {
                             #[cfg(z270_minimal_acpi)]
-                            if bus == 5 && device == 0 && function == 0 {
-                                // AX210 must not retain firmware DMA/IRQ when
+                            if (bus == 5 && device == 0 && function == 0)
+                                || (bus == 0 && device == 0x1f && function == 3) {
+                                // AX210/PCH audio must not retain firmware DMA/IRQ when
                                 // entering the translated Zone0 address space.
                                 self.mask_pci_interrupts(config);
                                 let ptr = (config + PCI_COMMAND_OFFSET) as *mut u16;

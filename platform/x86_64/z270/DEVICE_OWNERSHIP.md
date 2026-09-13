@@ -4,6 +4,24 @@
 原生 Linux 的 IOMMU 分组，不等于 hvisor 已实现同等隔离。
 当前只有 Zone0，不能把单 Zone 跑通解释为跨 Zone 安全验证。
 
+## 本轮实测更新
+
+- AX210 已分配为 00:1b.0：iwlwifi 固件加载、自动关联、DHCP 地址获取
+  正常；绑定 wlan0 ping 网关 10.31.0.1 两次成功。管理机直连其 Wi-Fi
+  IPv4 曾报无路由，不宣称该入站路径已通过。
+- ASMedia 已分配为 00:1c.0：xhci_hcd 接管，新增 Bus003/004 的
+  480M/10000M 根集线器；尚无插入该控制器的外设，实际传输待验证。
+- PCH Audio 已分配为 00:1d.0：snd_hda_intel、HDA Intel PCH 和
+  codec/模拟接口注册正常，与 HDMI 声卡并存；实际录放音待验证。
+- 三项分别部署重启；最终桌面和网络在线，systemctl --failed 为0。
+- 表中这三项“计划/待接入”是初始设计记录，以本段实测状态为准。
+- 额外修复 PCI 桥扫描返回路径：恢复父功能后必须先遍历同槽后续
+  function，否则跳过 00:1c.4/.7，造成 ASMedia/AX210 不可见。
+- 最新 ELF e671624a25a78dfc6cffc1638b4d864e557487cac6a8f68838bb53ee6ed9ec8e。
+  前一稳定版备份：hvisor-audit-20260913-stFcFV（ASMedia 已启用）。
+- SMBus/MEI/PMC/LPC/桥仍未分配；不要把本轮结论用于跨 Zone DMA/IRQ
+  安全证明。PCH 音频的组10限制仍然存在。
+
 ## 拓扑及所有权
 
 | 物理节点 | 当前/计划客体 BDF | 原生组 | 上游/共享依赖 | 状态及分离约束 |
