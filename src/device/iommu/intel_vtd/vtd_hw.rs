@@ -562,6 +562,19 @@ impl Vtd {
                         let bdf = ((bus as u64) << 8) | ((device as u64) << 3) | function as u64;
                         if self.devices.contains_key(&bdf) {
                             #[cfg(z270_minimal_acpi)]
+                            if bus == 5 && device == 0 && function == 0 {
+                                // AX210 must not retain firmware DMA/IRQ when
+                                // entering the translated Zone0 address space.
+                                self.mask_pci_interrupts(config);
+                                let ptr = (config + PCI_COMMAND_OFFSET) as *mut u16;
+                                unsafe {
+                                    let old = read_volatile(ptr);
+                                    write_volatile(ptr, (old & !PCI_COMMAND_BUS_MASTER) | PCI_COMMAND_INTX_DISABLE);
+                                    asm!("mfence", options(nostack, preserves_flags));
+                                    assert_eq!(read_volatile(ptr) & PCI_COMMAND_BUS_MASTER, 0);
+                                }
+                            }
+                            #[cfg(z270_minimal_acpi)]
                             if bus == 1 && device == 0 && function <= 1 {
                                 // GP102 and its HDMI function share the device.
                                 // Assignment must not bypass the firmware DMA

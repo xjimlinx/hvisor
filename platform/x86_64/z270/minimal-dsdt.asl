@@ -22,6 +22,8 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
                 WordBusNumber (ResourceProducer, MinFixed, MaxFixed, PosDecode,
                     0, 0, 0, 0, 1)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDF100000, 0xDF103FFF, 0, 0x4000)
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDE000000, 0xDEFFFFFF, 0, 0x1000000)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     Prefetchable, ReadWrite, 0, 0xC0000000, 0xCFFFFFFF, 0, 0x10000000)
@@ -69,6 +71,7 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270MIN", 1)
             Device (SAT0) { Name (_ADR, 0x00170000) }
             Device (XHC0) { Name (_ADR, 0x00140000) }
             Device (GLAN) { Name (_ADR, 0x00190000) }
+            Device (WLAN) { Name (_ADR, 0x001B0000) }
             Device (GFX0) { Name (_ADR, 0x001A0000) }
             Device (HDA0) { Name (_ADR, 0x001A0001) }
         }

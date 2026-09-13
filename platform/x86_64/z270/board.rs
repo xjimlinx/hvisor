@@ -49,7 +49,7 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Keep HDMI audio isolated until separately tested; preserve INFO in hvisor.
 pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 earlycon=efifb nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=0 root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 22] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 23] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -114,6 +114,13 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 22] = [
         physical_start: 0x8fba_2000,
         virtual_start: 0x8fba_2000,
         size: 0x0005_e000,
+    },
+    // AX210: physical 05:00.0, BAR0 including MSI-X table.
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_IO,
+        physical_start: 0xdf10_0000,
+        virtual_start: 0xdf10_0000,
+        size: 0x4000,
     },
     // Intel I219-V 00:1f.6 BAR0, kept at its real MMIO address.
     HvConfigMemoryRegion {
@@ -231,7 +238,8 @@ pub const ROOT_PCI_MAX_BUS: usize = 0;
 // the unassigned LPC function 00:1f.0. VT-d still uses physical BDF 00:1f.6.
 // GPU functions share guest slot 00:1a; VT-d uses physical 01:00.0/1.
 // Keep the existing NVIDIA blacklist until SSH is available for driver tests.
-pub const ROOT_PCI_DEVS: [HvPciDevConfig; 6] = [
+pub const ROOT_PCI_DEVS: [HvPciDevConfig; 7] = [
+    pci_dev!(0, 5, 0x00, 0 => 0, 0x1b, 0, VpciDevType::Physical), // AX210
     pci_dev!(0, 0, 0x00, 0 => 0, 0x00, 0, VpciDevType::Physical), // host bridge
     pci_dev!(0, 0, 0x14, 0 => 0, 0x14, 0, VpciDevType::Physical), // Intel xHCI
     pci_dev!(0, 0, 0x17, 0 => 0, 0x17, 0, VpciDevType::Physical), // SATA AHCI

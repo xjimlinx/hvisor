@@ -2203,7 +2203,13 @@ impl<B: BarAllocator> PciIterator<B> {
         // Move to next device
         self.function = 0;
         while self.next_device_not_ok() {
-            // Keep moving to next device until we find a valid one or finish
+            // A popped child restores its upstream bridge function. Resume
+            // sibling functions before advancing the upstream device number.
+            if self.is_mulitple_function && self.function < MAX_FUNCTION {
+                self.function += 1;
+                return;
+            }
+            self.function = 0;
         }
     }
 }
