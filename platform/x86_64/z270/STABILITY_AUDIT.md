@@ -37,7 +37,8 @@ boot_id：`b039413c-fb08-46eb-8671-f8c29d75512b`。
 3. 声卡实际播放/录音、蓝牙配对、ASMedia USB外设传输和复位。
 4. INTx回退与原生ACPI路由差异；SMBus当前仍使用轮询。
 5. LPC/PMC电源管理、EFI runtime、休眠/唤醒，当前不作支持承诺。
-6. boardgen独立仓库模板同步、hvisor集成改动与新板生成构建验收。
+6. boardgen模板同步、构建入口集成与新名称生成构建已完成，见
+   BOARDGEN_INTEGRATION.md；新主板实机验收仍待做。
 7. 跨Zone设备复位/交接，以及PCI/EPT/VT-d/IRQ/ACPI一致分配与隔离。
 8. Steam代理目前为临时SSH隧道，长期方案尚未配置。
 

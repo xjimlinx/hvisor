@@ -163,8 +163,18 @@ fn main() {
     let bid = build_env.bid;
 
     println!("cargo:rustc-check-cfg=cfg(z270_minimal_acpi)");
-    if arch == "x86_64" && board == "z270" {
-        let source = "platform/x86_64/z270/minimal-dsdt.asl";
+    let boardgen_marker = format!("platform/{arch}/{board}/boardgen-profile");
+    println!("cargo:rerun-if-changed={boardgen_marker}");
+    let generated_minimal_acpi = fs::read_to_string(&boardgen_marker)
+        .map(|s| {
+            assert_eq!(s.trim(), "intel-trusted-zone0-v1", "unsupported boardgen profile");
+            true
+        }).unwrap_or_else(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound { false }
+            else { panic!("cannot read boardgen profile: {e}") }
+        });
+    if arch == "x86_64" && (board == "z270" || generated_minimal_acpi) {
+        let source = format!("platform/{arch}/{board}/minimal-dsdt.asl");
         println!("cargo:rerun-if-changed={source}");
         let prefix = Path::new(&env::var("OUT_DIR").unwrap()).join("z270-minimal-dsdt");
         let status = std::process::Command::new("iasl")
