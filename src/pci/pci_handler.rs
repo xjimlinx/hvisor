@@ -1795,6 +1795,24 @@ fn handle_config_space_access(
                             }
                         }
                     }
+                    VpciDevType::PchStub => {
+                        // The Z270 PCH identity stub has ordinary emulated
+                        // endpoint fields (vendor/device/class) but no BAR,
+                        // MSI or virtio backend. Route config reads through
+                        // the normal emulation path so i915 can discover the
+                        // SPT LPC ID.
+                        if let Some(val) = handle_endpoint_access(
+                            dev,
+                            EndpointField::from(offset as usize, size),
+                            value,
+                            is_write,
+                            is_direct,
+                            is_root,
+                            is_dev_belong_to_zone,
+                        )? {
+                            mmio.value = val;
+                        }
+                    }
                     _ => {
                         // virt pci dev
                         if let Some(val) =

@@ -18,8 +18,17 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270ALL", 1)
                     0, 0, 6, 0, 7)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     NonCacheable, ReadWrite, 0, 0xDE000000, 0xDF3FFFFF, 0, 0x1400000)
+                // Integrated Kaby Lake display BAR0.  Keep the firmware
+                // assignment visible to a guest so Linux does not relocate
+                // it into an un-mapped high MMIO address (the previous
+                // 0xfef9xxxx fault was exactly such a relocation).
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    NonCacheable, ReadWrite, 0, 0xDD000000, 0xDDFFFFFF, 0, 0x1000000)
                 DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
                     Prefetchable, ReadWrite, 0, 0xC0000000, 0xD1FFFFFF, 0, 0x12000000)
+                // Integrated display stolen/GTT aperture BAR2.
+                DWordMemory (ResourceProducer, PosDecode, MinFixed, MaxFixed,
+                    Prefetchable, ReadWrite, 0, 0xB0000000, 0xBFFFFFFF, 0, 0x10000000)
                 WordIO (ResourceProducer, MinFixed, MaxFixed, PosDecode, EntireRange,
                     0, 0xE000, 0xFFFF, 0, 0x2000)
             })
@@ -57,7 +66,12 @@ DefinitionBlock ("", "DSDT", 2, "HVISOR", "Z270ALL", 1)
                 // Preserve the working pin-B route: native SMBus IRQ16.
                 // Raw firmware AR00 says 17; do not silently switch the live
                 // controller contract. SMBus remains polling, HDA/NIC MSI.
-                Package () { 0x001FFFFF, One, Zero, 0x10 }
+                Package () { 0x001FFFFF, One, Zero, 0x10 },
+                // The integrated Kaby Lake display endpoint is INT A.  The
+                // native board routes it through AR00 to GSI16; without this
+                // entry Linux sees no IRQ for 00:02.0 and the i915 HPD setup
+                // takes an invalid path after the DDI-A probe fails.
+                Package () { 0x0002FFFF, Zero, Zero, 0x10 }
             })
             Device (SAT0) { Name (_ADR, 0x00170000) }
             Device (XHC0) { Name (_ADR, 0x00140000) }

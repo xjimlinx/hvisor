@@ -70,14 +70,22 @@ pub fn dispatch(code: u64, arg0: usize, arg1: usize) -> HyperCallResult {
 
 pub fn seal_for_start(config: &HvZoneConfig) -> crate::error::HvResult<MutexGuard<'static, bool>> {
     let mut sealed = SEALED.lock();
-    let igpu = config.num_pci_devs == 2 && config.num_pci_bus == 1 && {
+    let igpu = (config.num_pci_devs == 2 || config.num_pci_devs == 3) && config.num_pci_bus == 1 && {
         let bridge = config.alloc_pci_devs[0];
         let d = config.alloc_pci_devs[1];
         bridge.domain == 0 && bridge.bus == 0 && bridge.device == 0 && bridge.function == 0 &&
             bridge.v_bus == 0 && bridge.v_device == 0 && bridge.v_function == 0 &&
         d.domain == 0 && d.bus == 0 && d.device == 2 && d.function == 0 &&
             d.dev_type == crate::pci::vpci_dev::VpciDevType::Physical &&
-            d.v_bus == 0 && d.v_device == 2 && d.v_function == 0
+            d.v_bus == 0 && d.v_device == 2 && d.v_function == 0 &&
+        (config.num_pci_devs == 2 || {
+            let pch = config.alloc_pci_devs[2];
+            // 00:1f.0 is host-owned, so place the identity-only stub at the
+            // otherwise empty 00:1e.0 slot. i915 scans by class, not BDF.
+            pch.domain == 0 && pch.bus == 0 && pch.device == 0x1e && pch.function == 0 &&
+                pch.v_bus == 0 && pch.v_device == 0x1e && pch.v_function == 0 &&
+                pch.dev_type == crate::pci::vpci_dev::VpciDevType::PchStub
+        })
     };
     if *sealed || config.zone_id != 1 || config.cpus() != alloc::vec![2,3,6,7] ||
         (config.num_pci_devs != 0 && !igpu) {

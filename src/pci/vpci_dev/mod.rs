@@ -33,6 +33,7 @@ macro_rules! arc_rwlock {
 }
 
 mod blk;
+mod pch;
 mod rng;
 pub mod standard;
 pub mod tools;
@@ -59,6 +60,10 @@ pub enum VpciDevType {
     StandardVdev = 1,
     VirtioRng = 2,
     VirtioBlk = 3,
+    /// Identity-only Intel PCH ISA bridge used by the Z270 iGPU guest.
+    /// It exposes the SPT LPC ID so i915 can select the correct HPD/PCH
+    /// register layout without sharing the host's LPC device or DMA.
+    PchStub = 4,
     // Add new device types here
 }
 
@@ -93,6 +98,7 @@ static HANDLERS: &[(&dyn VpciDeviceHandler, VpciDevType)] = &[
     (&standard::HANDLER, VpciDevType::StandardVdev),
     (&rng::HANDLER, VpciDevType::VirtioRng),
     (&blk::HANDLER, VpciDevType::VirtioBlk),
+    (&pch::HANDLER, VpciDevType::PchStub),
 ];
 
 pub(crate) fn get_handler(dev_type: VpciDevType) -> Option<&'static dyn VpciDeviceHandler> {
@@ -108,42 +114,31 @@ pub(super) fn virt_dev_init(
     base: PciConfigAddress,
     dev_type: VpciDevType,
 ) -> Option<VirtualPciConfigSpace> {
-    #[cfg(virtio_pci)]
-    {
-        // Create initial VirtualPciConfigSpace with default values
+    // Identity-only virtual devices (such as the Z270 PCH stub) do not depend
+    // on the optional virtio-pci backend. Keep construction available for all
+    // PCI builds; virtio handlers remain gated internally by their features.
+    use crate::pci::{pci_access::Bar, pci_struct::ConfigValue};
+    let initial_dev = VirtualPciConfigSpace::virt_dev_init_default(
+        bdf,
+        base,
+        dev_type,
+        ConfigValue::default(),
+        Bar::default(),
+        None,
+    );
 
-        use crate::pci::{pci_access::Bar, pci_struct::ConfigValue};
-        let initial_dev = VirtualPciConfigSpace::virt_dev_init_default(
-            bdf,
-            base,
-            dev_type,
-            ConfigValue::default(),
-            Bar::default(),
-            None,
-        );
-
-        match dev_type {
-            VpciDevType::Physical => {
-                // Physical devices use default values
-                warn!("virt_dev_init: physical device is not supported");
+    match dev_type {
+        VpciDevType::Physical => {
+            warn!("virt_dev_init: physical device is not supported");
+            Some(initial_dev)
+        }
+        _ => {
+            if let Some(handler) = get_handler(dev_type) {
+                Some(handler.vdev_init(initial_dev))
+            } else {
+                warn!("virt_dev_init: unknown device type");
                 Some(initial_dev)
             }
-            _ => {
-                if let Some(handler) = get_handler(dev_type) {
-                    // Let handler modify and return the device
-                    Some(handler.vdev_init(initial_dev))
-                } else {
-                    warn!("virt_dev_init: unknown device type");
-                    Some(initial_dev)
-                }
-            }
         }
-    }
-    #[cfg(not(virtio_pci))]
-    {
-        warn!(
-            "Try to initialize a virtual virtio pci device when feature virtio-pci is not enabled"
-        );
-        None
     }
 }

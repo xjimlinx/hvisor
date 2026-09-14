@@ -93,3 +93,22 @@ CPU按MADT顺序0/1/4/5与2/3/6/7分为两个完整物理核心的集合。
 - 证据在evidence/baremetal/zone1-ramfs-boot-20260914.log及远程candidate
   的boot-fb-handoff.log/hvisor-fb-handoff.log。部分旧CPU日志写死
   “Zone0”，应以zone list和Zone1 INIT_READY为准。
+
+## Zone1 核显首轮适配（2026-09-14，实机）
+
+- 原生快照确认 00:02.0 是 HD630/Kaby Lake，BAR0=`dd000000/16MiB`、
+  BAR2=`b0000000/256MiB`、BAR4=`f000/64B`。最小 DSDT 已发布这些固定
+  资源；此前 i915 把 BAR 搬到 `0xfef9xxxx` 的 EPT/MMIO fault 不再出现。
+- i915 还要求通过 Intel ISA bridge 识别 Sunrise Point PCH。00:1f.0 属于
+  Zone0，不能直通给 Zone1，因此新增虚拟 `00:1e.0` PCH identity stub
+  （8086:a2c5、class 0601，无 BAR/MSI/DMA）。真实日志确认 stub 已插入，
+  i915 不再在 `ilk_hpd_irq_setup` 触发 NULL dereference。
+- 最近一次未重启的实机状态：Zone0（CPU 0,1,4,5）和 Zone1（2,3,6,7）
+  同时 running；Zone1 i915 完成 DMC、注册 3 个 plane，并建立 `fb0`，
+  心跳持续，hvisor 无 EPT/MMIO panic。
+- 当前明确剩余缺口：i915 报 `can't find IRQ for PCI INT A`，因为 GSI16
+  与Zone0平台路由共享，不能直接把物理GSI16再分配给Zone1；显示引擎
+  仍反复报告 `PLANE:33 ... SURF=0xc0000`，物理 HDMI 连接/亮屏尚未验收。
+  下一步应做显示引擎安全交接和HPD中断代理，不能靠继续扩大RAM或PCI
+  BAR映射解决。EDID 固件覆盖和1366x768强制模式已加入候选配置，但没有
+  伪造“已亮屏”结论。

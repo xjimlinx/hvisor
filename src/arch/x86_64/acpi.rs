@@ -1,4 +1,5 @@
 // Copyright (c) 2025 Syswonder
+// Z270 ACPI routing revisions are intentionally tracked in the board DSDT.
 // hvisor is licensed under Mulan PSL v2.
 // You can use this software according to the terms and conditions of the Mulan PSL v2.
 // You may obtain a copy of Mulan PSL v2 at:
@@ -824,15 +825,21 @@ pub fn root_init() {
 pub fn copy_to_guest_memory_region(config: &HvZoneConfig, cpu_set: &CpuSet) {
     let mut banned: BTreeSet<Signature> = BTreeSet::new();
     if config.zone_id != 0 {
-        banned.insert(Signature::FADT);
+        // Guest zones must not evaluate arbitrary firmware SSDTs: their
+        // OperationRegions target host-owned controllers.  The Z270 guest
+        // still needs the FADT header so Linux can discover the synthetic
+        // PCI0._PRT route used by a passthrough display device.
         banned.insert(Signature::SSDT);
+        if !cfg!(z270_minimal_acpi) {
+            banned.insert(Signature::FADT);
+        }
     }
     ROOT_ACPI.get().unwrap().copy_to_zone_region(
         &config.memory_regions()[config.arch_config.rsdp_memory_region_id],
         &config.memory_regions()[config.arch_config.acpi_memory_region_id],
         &banned,
         cpu_set,
-        cfg!(z270_minimal_acpi) && config.zone_id == 0,
+        cfg!(z270_minimal_acpi) && (config.zone_id == 0 || config.zone_id == 1),
     );
 }
 
