@@ -38,6 +38,9 @@ use crate::event::{send_event, IPI_EVENT_SHUTDOWN, IPI_EVENT_VIRTIO_PCI_DONE, IP
 use core::convert::TryFrom;
 use numeric_enum_macro::numeric_enum;
 
+#[cfg(z270_stage)]
+pub(crate) mod z270_stage;
+
 numeric_enum! {
     #[repr(u64)]
     #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -73,6 +76,10 @@ impl<'a> HyperCall<'a> {
     }
 
     pub fn hypercall(&mut self, code: u64, arg0: u64, arg1: u64) -> HyperCallResult {
+        #[cfg(z270_stage)]
+        if (12..=15).contains(&code) {
+            return z270_stage::dispatch(code, arg0 as usize, arg1 as usize);
+        }
         let code = match HyperCallCode::try_from(code) {
             Ok(code) => code,
             Err(_) => {
@@ -285,6 +292,8 @@ impl<'a> HyperCall<'a> {
                 )
             );
         }
+        #[cfg(z270_stage)]
+        let _stage_lock = z270_stage::seal_for_start(config)?;
         let zone_result = zone_create(config);
         clear_zone_boot_mode(config.zone_id as usize);
         let zone = zone_result?;

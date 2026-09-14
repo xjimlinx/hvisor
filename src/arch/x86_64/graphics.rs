@@ -64,6 +64,12 @@ pub struct FramebufferInfo {
 }
 
 static FRAMEBUFFER_INFO: Once<Mutex<FramebufferInfo>> = Once::new();
+// Firmware scanout VRAM may be repurposed (including GPU page tables) once
+// the guest driver owns the GPU. Serialize handoff with all framebuffer writes.
+#[cfg(z270_stage)]
+static GUEST_OWNS_FRAMEBUFFER: Mutex<bool> = Mutex::new(false);
+#[cfg(z270_stage)]
+pub fn release_to_guest() { *GUEST_OWNS_FRAMEBUFFER.lock() = true; }
 
 pub fn font_init(psf: &'static [u8]) {
     let psf_header = unsafe { *(psf.as_ptr() as *const Psf2Header) };
@@ -217,6 +223,10 @@ fn fb_putchar_new_line(bg: u32) {
 }
 
 pub fn fb_putchar(ch: u8, fg: u32, bg: u32) {
+    #[cfg(z270_stage)]
+    let ownership = GUEST_OWNS_FRAMEBUFFER.lock();
+    #[cfg(z270_stage)]
+    if *ownership { return; }
     match ch as char {
         '\r' => {}
         '\n' => fb_putchar_new_line(bg),
@@ -225,6 +235,10 @@ pub fn fb_putchar(ch: u8, fg: u32, bg: u32) {
 }
 
 pub fn fb_putstr(s: &str, fg: u32) {
+    #[cfg(z270_stage)]
+    let ownership = GUEST_OWNS_FRAMEBUFFER.lock();
+    #[cfg(z270_stage)]
+    if *ownership { return; }
     for c in s.chars() {
         match c {
             '\n' => {

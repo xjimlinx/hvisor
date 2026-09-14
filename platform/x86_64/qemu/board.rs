@@ -139,7 +139,9 @@ pub const ROOT_ARCH_ZONE_CONFIG: HvArchZoneConfig = HvArchZoneConfig {
 pub const ROOT_PCI_CONFIG: [HvPciConfig; 1] = [HvPciConfig {
     bus_range_begin: 0x0,
     bus_range_end: 0x1f,
-    ecam_base: 0xe0000000,
+    // QEMU 11.1 places the q35 MCFG window at 0xb000_0000 with this
+    // machine layout. Keep the stage-2 ECAM mapping consistent with ACPI.
+    ecam_base: 0xb0000000,
     ecam_size: 0x200000,
     io_base: 0x0,
     io_size: 0x0,

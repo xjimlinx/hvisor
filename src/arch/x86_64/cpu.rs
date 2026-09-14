@@ -296,6 +296,10 @@ impl ArchCpu {
             // info!("AP start up! addr: {:x}", per_cpu.cpu_on_entry);
         }
 
+        // Guest BSP is a Zone role, not physical CPU0. Linux otherwise treats
+        // a second Zone's first CPU as a crash kernel and disables its APs.
+        self.virt_lapic.guest.base = (self.virt_lapic.guest.base & !0x100)
+            | ((per_cpu.boot_cpu as u64) << 8);
         self.setup_vmcs(per_cpu.cpu_on_entry, false).unwrap();
         info!("CPU{}: Zone0 VMCS ready", self.cpuid);
         per_cpu.activate_gpm();
@@ -338,6 +342,10 @@ impl ArchCpu {
         clear_vectors(self.cpuid);
 
         info!("CPU{}: launching Zone0", self.cpuid);
+        #[cfg(z270_stage)]
+        if per_cpu.boot_cpu && per_cpu.zone.as_ref().unwrap().id() == 0 {
+            crate::arch::graphics::release_to_guest();
+        }
         unsafe { self.vmx_launch() };
 
         loop {}

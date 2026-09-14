@@ -1591,6 +1591,24 @@ impl VirtualPciConfigSpace {
         }
     }
 
+    /// Reclassify the firmware host-bridge placeholder for a guest root bus.
+    ///
+    /// ECAM enumeration represents a host bridge as an `unknown` config-space
+    /// node because it has no endpoint header.  When that node is explicitly
+    /// assigned to a guest, Linux still needs a class-0600 root function and
+    /// the host-bridge access policy; presenting the placeholder as an
+    /// endpoint (class ff) makes the guest PCI scan unreliable.
+    pub(crate) fn make_host_bridge(&mut self, vbdf: Bdf) {
+        self.host_bdf = self.bdf;
+        self.parent_bdf = self.bdf;
+        self.parent_bus = self.bdf.bus();
+        self.vbdf = vbdf;
+        self.config_type = HeaderType::Endpoint;
+        self.config_value.set_class((0x06, 0x00, 0x00));
+        self.control = VirtualPciConfigControl::host_bridge();
+        self.access = VirtualPciAccessBits::host_bridge();
+    }
+
     fn init_bridge_bus_reg(
         &mut self,
         domain_bus_range_end: u8,

@@ -64,6 +64,6 @@ for required in ("modprobe.blacklist=nouveau", "module_blacklist=nouveau", "pani
     assert required in cmdline
 assert all(x not in cmdline for x in ("nomodeset", "maxcpus=", "nosmp"))
 assert 'earlycon=efifb' not in cmdline
-assert "pub const ROOT_ZONE_CPUS: u64 = 0xff;" in board
-assert any(r["physical_start"] == 0x700000000 and r["size"] == 0x16f000000 for r in regions)
+assert "pub const ROOT_ZONE_CPUS: u64 = 0x33;" in board
+assert any(r["physical_start"] == 0x870000000 and r["size"] == 0xf000000 for r in regions)
 print("PASS: native BDFs, dependency inventory, identity policy, RAM/ACPI contracts")

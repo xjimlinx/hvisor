@@ -347,6 +347,8 @@ impl VirtUart16550a {
 }
 
 pub fn console_putchar(c: u8) {
+    #[cfg(z270_stage)]
+    crate::hypercall::z270_stage::host_log_byte(c);
     COM1.lock().putchar(c);
     #[cfg(all(graphics))]
     fb_putchar(c, 0xffffffff, 0);

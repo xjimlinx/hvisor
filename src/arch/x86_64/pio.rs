@@ -95,7 +95,7 @@ impl PortIoBitmap {
         // }
 
         // i8042, we won't use it, but intercept its ports might block linux init
-        bitmap.set_range_intercept(I8042_PORT, false);
+        bitmap.set_range_intercept(I8042_PORT, zone_id != 0);
 
         bitmap
     }

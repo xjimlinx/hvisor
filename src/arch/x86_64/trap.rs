@@ -377,6 +377,9 @@ fn handle_io_instruction(arch_cpu: &mut ArchCpu, exit_info: &VmxExitInfo) -> HvR
             if this_zone_id() == 0 {
                 virt_console_io_write(io_info.port, value);
             } else {
+                #[cfg(z270_stage)]
+                crate::hypercall::z270_stage::uart_write(io_info.port, value);
+                #[cfg(not(z270_stage))]
                 virt_console_io_write(io_info.port, value);
                 // info!("zone1 uart write from {:x}: {:x}", io_info.port, value);
             }
@@ -392,8 +395,10 @@ fn handle_io_instruction(arch_cpu: &mut ArchCpu, exit_info: &VmxExitInfo) -> HvR
             if this_zone_id() == 0 {
                 value = virt_console_io_read(io_info.port);
             } else {
-                value = 0xff;
-                value = virt_console_io_read(io_info.port);
+                #[cfg(z270_stage)]
+                { value = crate::hypercall::z270_stage::uart_read(io_info.port); }
+                #[cfg(not(z270_stage))]
+                { value = virt_console_io_read(io_info.port); }
                 // info!("zone1 uart read from {:x}: {:x}", io_info.port, value);
             }
         } else if I8042_PORT.contains(&io_info.port) {

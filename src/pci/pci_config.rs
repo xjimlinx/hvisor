@@ -196,6 +196,7 @@ impl Zone {
         pci_config: &[HvPciConfig],
         _num_pci_config: usize,
     ) -> HvResult {
+        info!("Z270_PCI_BEGIN zone={} devices={} buses={}", _zone_id, num_pci_devs, _num_pci_config);
         let mut inner = self.write();
         let guard = GLOBAL_PCIE_LIST.lock();
         for target_pci_config in pci_config {
@@ -305,26 +306,30 @@ impl Zone {
 
                 #[cfg(iommu)]
                 {
-                    let iommu_pt_addr = if inner.iommu_pt().is_some() {
-                        inner.iommu_pt().unwrap().root_paddr()
-                    } else {
-                        0
-                    };
-                    let device_id = (dev_config.bus as usize) << 8
-                        | (dev_config.device as usize) << 3
-                        | dev_config.function as usize;
-                    #[cfg(share_s2pt)]
-                    iommu_add_device_with_root_pt_addr(
-                        _zone_id,
-                        device_id as _,
-                        inner.gpm().root_paddr(),
-                    );
-                    #[cfg(not(share_s2pt))]
-                    iommu_add_device_with_root_pt_addr(_zone_id, device_id as _, iommu_pt_addr);
+                    // Host bridges are configuration fabric, not DMA
+                    // requesters. Virtual devices must never enter VT-d.
+                    if dev_config.dev_type == VpciDevType::Physical &&
+                        !(dev_config.bus == 0 && dev_config.device == 0 && dev_config.function == 0) {
+                        let iommu_pt_addr = if inner.iommu_pt().is_some() {
+                            inner.iommu_pt().unwrap().root_paddr()
+                        } else { 0 };
+                        let device_id = (dev_config.bus as usize) << 8
+                            | (dev_config.device as usize) << 3
+                            | dev_config.function as usize;
+                        #[cfg(share_s2pt)]
+                        iommu_add_device_with_root_pt_addr(_zone_id, device_id as _, inner.gpm().root_paddr());
+                        #[cfg(not(share_s2pt))]
+                        {
+                            info!("Z270_PCI_IOMMU_ADD bdf={:02x}:{:02x}.{}", dev_config.bus, dev_config.device, dev_config.function);
+                            iommu_add_device_with_root_pt_addr(_zone_id, device_id as _, iommu_pt_addr);
+                            info!("Z270_PCI_IOMMU_DONE bdf={:02x}:{:02x}.{}", dev_config.bus, dev_config.device, dev_config.function);
+                        }
+                    }
                 }
 
                 // Insert device into vpci_bus with calculated vbdf
                 if let Some(dev) = guard.get(&bdf) {
+                    info!("Z270_PCI_GLOBAL_FOUND bdf={:02x}:{:02x}.{}", dev_config.bus, dev_config.device, dev_config.function);
                     if bdf.is_host_bridge(dev.read().get_host_bdf().bus())
                         || dev.with_config_value(|config_value| -> bool {
                             // ISA/LPC (06:01) is an owned endpoint, not a
@@ -338,6 +343,9 @@ impl Zone {
                             target_pci_config.bus_range_end as u8,
                             &filtered_devices,
                         );
+                        if bdf.is_host_bridge(dev.read().get_host_bdf().bus()) {
+                            vdev.make_host_bridge(vbdf);
+                        }
                         let msi_count = vdev.get_msi_count();
                         domain_msi_count += msi_count;
                         inner.vpci_bus_mut().insert(vbdf, vdev);
@@ -356,6 +364,7 @@ impl Zone {
                                 );
                             } else {
                                 dev.set_zone_id(Some(_zone_id as u32));
+                                info!("Z270_PCI_OWNER_SET bdf={:02x}:{:02x}.{} zone={}", dev_config.bus, dev_config.device, dev_config.function, _zone_id);
                                 let mut vdev_inner = dev.read().config_space.clone();
                                 vdev_inner.set_vbdf_with_bus_map(
                                     vbdf,
@@ -403,6 +412,8 @@ impl Zone {
                     }
                 }
             }
+
+            info!("Z270_PCI_END zone={} devices={}", _zone_id, filtered_devices.len());
 
             // After processing all devices for this domain, allocate hardware MSI bits
             if domain_msi_count > 0 {

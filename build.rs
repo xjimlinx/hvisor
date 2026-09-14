@@ -161,6 +161,10 @@ fn main() {
     let arch = build_env.arch;
     let board = build_env.board;
     let bid = build_env.bid;
+    println!("cargo:rustc-check-cfg=cfg(z270_stage)");
+    if arch == "x86_64" && board == "z270" {
+        println!("cargo:rustc-cfg=z270_stage");
+    }
 
     println!("cargo:rustc-check-cfg=cfg(z270_minimal_acpi)");
     let boardgen_marker = format!("platform/{arch}/{board}/boardgen-profile");

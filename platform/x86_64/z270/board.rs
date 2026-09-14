@@ -14,8 +14,8 @@ pub const ROOT_ZONE_BOOT_STACK: GuestPhysAddr = 0x7000;
 pub const ROOT_ZONE_ENTRY: u64 = 0x8000;
 pub const ROOT_ZONE_KERNEL_ADDR: u64 = 0x500_0000;
 
-// All eight hardware threads belong to Zone0; APs await virtual SIPI.
-pub const ROOT_ZONE_CPUS: u64 = 0xff;
+// MADT indices: SMT pairs 0/4 and 1/5. Reserve 2/6 and 3/7 for Zone1.
+pub const ROOT_ZONE_CPUS: u64 = 0x33;
 
 const ROOT_ZONE_RSDP_REGION: HvConfigMemoryRegion = HvConfigMemoryRegion {
     mem_type: MEM_TYPE_RAM,
@@ -47,9 +47,9 @@ pub const ROOT_ZONE_NAME: &str = "root-linux";
 // Do not use nosmp/maxcpus: all assigned APs boot through virtual SIPI.
 // Bare-metal Wayland profile, validated with GP102 and Plasma Login.
 // HDMI/PCH audio use the validated guest-side MSI policy; preserve hvisor INFO.
-pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau module_blacklist=nouveau i2c_i801.disable_features=0x10 panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=6,realloc=off root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
+pub const ROOT_ZONE_CMDLINE: &str = "video=vesafb console=tty0 nvidia_drm.modeset=1 nvidia_drm.fbdev=1 nmi_watchdog=0 modprobe.blacklist=nouveau,i915 module_blacklist=nouveau,i915 i2c_i801.disable_features=0x10 panic=0 reboot=pci,cold nointremap no_timer_check efi=noruntime pci=pcie_scan_all,lastbus=6,realloc=off root=UUID=ccb793fb-bdcf-4b15-911b-b17547f69e92 rw rootwait rd.systemd.gpt_auto=0 systemd.gpt_auto=0 noresume systemd.unit=graphical.target systemd.log_level=warning systemd.log_location=0 systemd.show_status=auto loglevel=4 trace_buf_size=256K trace_event=xhci-hcd:xhci_handle_event,xhci-hcd:xhci_handle_command,xhci-hcd:xhci_setup_device hvisor.gpu=graphics hvisor.zone0=1\0";
 
-pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 30] = [
+pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 32] = [
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x500_0000,
@@ -81,7 +81,8 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 30] = [
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x3a40_0000,
         virtual_start: 0x3540_0000,
-        size: 0x4a21_0000,
+        // Native RAM ends at 0x6fe10000 after enabling HD630.
+        size: 0x35a1_0000,
     },
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_IO,
@@ -93,26 +94,39 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 30] = [
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x1_0000_0000,
         virtual_start: 0x1_0000_0000,
-        size: 0x6_0000_0000,
+        // Zone1 owns [0x5f0000000, 0x870000000); never map it in Zone0.
+        size: 0x4_f000_0000,
     },
     HvConfigMemoryRegion {
-        // Native e820: System RAM through 0x86effffff, not firmware.
+        // Remaining native high RAM after the 10 GiB Zone1 reservation.
         mem_type: MEM_TYPE_RAM,
-        physical_start: 0x7_0000_0000,
-        virtual_start: 0x7_0000_0000,
-        size: 0x1_6f00_0000,
+        physical_start: 0x8_7000_0000,
+        virtual_start: 0x8_7000_0000,
+        size: 0x0f00_0000,
     },
     // Remaining native low-RAM fragments; avoid adjacent ACPI/NVS holes.
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
-        physical_start: 0x8461_2000,
-        virtual_start: 0x8461_2000,
-        size: 0x08c9_b000,
+        physical_start: 0x6fe1_2000,
+        virtual_start: 0x6fe1_2000,
+        size: 0x05e0_d000,
     },
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_RAM,
-        physical_start: 0x8fba_2000,
-        virtual_start: 0x8fba_2000,
+        physical_start: 0x75c6_5000,
+        virtual_start: 0x75c6_5000,
+        size: 0x00fd_e000,
+    },
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_RAM,
+        physical_start: 0x76c4_4000,
+        virtual_start: 0x76c4_4000,
+        size: 0x01e6_9000,
+    },
+    HvConfigMemoryRegion {
+        mem_type: MEM_TYPE_RAM,
+        physical_start: 0x7b3a_2000,
+        virtual_start: 0x7b3a_2000,
         size: 0x0005_e000,
     },
     // Native reserved PWRM range, separate from APIC/VT-d registers.
