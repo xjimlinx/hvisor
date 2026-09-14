@@ -100,8 +100,10 @@ CPU按MADT顺序0/1/4/5与2/3/6/7分为两个完整物理核心的集合。
   BAR2=`b0000000/256MiB`、BAR4=`f000/64B`。最小 DSDT 已发布这些固定
   资源；此前 i915 把 BAR 搬到 `0xfef9xxxx` 的 EPT/MMIO fault 不再出现。
 - i915 还要求通过 Intel ISA bridge 识别 Sunrise Point PCH。00:1f.0 属于
-  Zone0，不能直通给 Zone1，因此新增虚拟 `00:1e.0` PCH identity stub
-  （8086:a2c5、class 0601，无 BAR/MSI/DMA）。真实日志确认 stub 已插入，
+  Zone0，不能直通给 Zone1，因此用空物理查找槽 `00:1e.0` 生成虚拟
+  PCH identity stub，并向客体呈现标准 `00:1f.0`（8086:a2c5、class
+  0601，无 BAR/MSI/DMA）。这样与 DSDT 的 LPCB/PCI 拓扑一致，不触碰
+  Zone0 实际拥有的 00:1f.0；真实日志确认 stub 已插入，
   i915 不再在 `ilk_hpd_irq_setup` 触发 NULL dereference。
 - 最近一次未重启的实机状态：Zone0（CPU 0,1,4,5）和 Zone1（2,3,6,7）
   同时 running；Zone1 i915 完成 DMC、注册 3 个 plane，并建立 `fb0`，
