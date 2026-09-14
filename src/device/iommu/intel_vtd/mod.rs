@@ -17,6 +17,7 @@
 #![allow(unused)]
 
 mod vtd_hw;
+mod drhd;
 
 use super::Iommu;
 use crate::cpu_data::this_zone;

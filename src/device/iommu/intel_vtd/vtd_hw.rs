@@ -17,7 +17,6 @@
 use crate::{
     arch::{acpi, hpet::current_time_nanos},
     memory::{Frame, HostPhysAddr},
-    zone::this_zone_id,
 };
 use ::acpi::sdt::Signature;
 use alloc::{collections::btree_map::BTreeMap, vec::Vec};
@@ -86,7 +85,7 @@ mod dma_remap_reg {
     pub(super) const DMAR_IRTA_REG: usize = 0xb8;
 }
 
-static VTD: Once<Mutex<Vtd>> = Once::new();
+static VTD: Once<Mutex<VtdManager>> = Once::new();
 static LAST_FAULT_CHECK_NS: AtomicU64 = AtomicU64::new(0);
 static FAULT_REPORT_COUNT: AtomicUsize = AtomicUsize::new(0);
 const MAX_FAULT_REPORTS: usize = 16;
@@ -191,16 +190,6 @@ struct Vtd {
 }
 
 impl Vtd {
-    fn activate(&mut self) {
-        self.quiesce_unassigned_pci_endpoints();
-        self.wait_for_pci_dma_drain();
-        // A request issued before Bus Master was cleared may finish during the
-        // drain interval.  Start the actual translation test with clean fault
-        // records so it cannot hide a later AHCI fault.
-        self.clear_stale_faults();
-        self.activate_dma_translation();
-    }
-
     fn activate_dma_translation(&mut self) {
         if !self.gcmd.contains(GcmdFlags::TE) {
             self.gcmd |= GcmdFlags::TE;
@@ -237,6 +226,7 @@ impl Vtd {
 
     fn update_context_entry(
         &mut self,
+        zone_id: usize,
         bus: u8,
         dev_func: u8,
         zone_s2pt_hpa: HostPhysAddr,
@@ -244,7 +234,6 @@ impl Vtd {
     ) {
         let root_entry_hpa = self.root_table.start_paddr() + (bus as usize) * ROOT_TABLE_ENTRY_SIZE;
         let root_entry_low = unsafe { &mut *(root_entry_hpa as *mut u64) };
-        let zone_id = this_zone_id();
 
         // context table not present
         if !root_entry_low.get_bit(0) {
@@ -295,6 +284,9 @@ impl Vtd {
     }
 
     fn add_device(&mut self, zone_id: usize, bdf: u64) {
+        if let Some(owner) = self.devices.get(&bdf) {
+            assert_eq!(*owner, zone_id, "VT-d device already assigned to another zone");
+        }
         self.devices.insert(bdf, zone_id);
     }
 
@@ -338,7 +330,7 @@ impl Vtd {
             .collect();
 
         for (bus, dev_func) in bdfs {
-            self.update_context_entry(bus, dev_func, 0, false);
+            self.update_context_entry(zone_id, bus, dev_func, 0, false);
         }
         self.invalid_iotlb(zone_id as _);
     }
@@ -504,12 +496,12 @@ impl Vtd {
             .collect();
 
         for (bus, dev_func) in bdfs {
-            self.update_context_entry(bus, dev_func, zone_s2pt_hpa, true);
+            self.update_context_entry(zone_id, bus, dev_func, zone_s2pt_hpa, true);
         }
         self.invalid_iotlb(zone_id as _);
     }
 
-    fn quiesce_unassigned_pci_endpoints(&mut self) {
+    fn quiesce_unassigned_pci_endpoints(&mut self, assigned: &BTreeMap<u64, usize>) {
         // Walk every reachable bus from each ECAM root.  Merely hiding a PCI
         // function from Zone0 does not stop DMA left active by firmware.
         for root in crate::platform::ROOT_PCI_CONFIG.iter() {
@@ -560,7 +552,7 @@ impl Vtd {
                         }
 
                         let bdf = ((bus as u64) << 8) | ((device as u64) << 3) | function as u64;
-                        if self.devices.contains_key(&bdf) {
+                        if assigned.contains_key(&bdf) {
                             #[cfg(z270_minimal_acpi)]
                             if (bus == 5 && device == 0 && function == 0)
                                 || (bus == 0 && device == 0x1f && function == 3)
@@ -827,31 +819,8 @@ const fn dma_iotlb_did(did: u16) -> u64 {
     ((did as u64) & 0xffff) << 16
 }
 
-fn parse_root_dmar() -> Mutex<Vtd> {
-    let dmar = acpi::root_get_table(&Signature::DMAR).unwrap();
-    let mut cur: usize = 48; // start offset of remapping structures
-    let len = dmar.get_len();
-
-    let mut reg_base_hpa: usize = 0;
-
-    while cur < len {
-        let struct_type = dmar.get_u16(cur);
-        let struct_len = dmar.get_u16(cur + 2) as usize;
-
-        if struct_type == 0 {
-            let segment = dmar.get_u16(cur + 6);
-
-            // we only support segment 0
-            if segment == 0 {
-                reg_base_hpa = dmar.get_u64(cur + 8) as usize;
-            }
-        }
-        cur += struct_len;
-    }
-
-    assert!(reg_base_hpa != 0);
-
-    Mutex::new(Vtd {
+fn new_unit(reg_base_hpa: usize) -> Vtd {
+    Vtd {
         reg_base_hpa,
         devices: BTreeMap::new(),
         root_table: Frame::new_zero().unwrap(),
@@ -862,7 +831,73 @@ fn parse_root_dmar() -> Mutex<Vtd> {
         gcmd: GcmdFlags::empty(),
         qi_queue_hpa: 0,
         qi_tail: 0,
-    })
+    }
+}
+
+struct VtdManager {
+    routing: Vec<super::drhd::Unit>,
+    units: Vec<Vtd>,
+    active: bool,
+}
+
+impl VtdManager {
+    fn init(&mut self) {
+        for unit in &mut self.units { unit.init(); }
+    }
+
+    fn add_device(&mut self, zone_id: usize, bdf: u64) {
+        assert!(bdf <= u16::MAX as u64, "unsupported PCI segment");
+        let index = super::drhd::route(&self.routing, bdf as u16)
+            .expect("PCI requester has no DRHD route");
+        self.units[index].add_device(zone_id, bdf);
+    }
+
+    fn clear_devices(&mut self, zone_id: usize) {
+        for unit in &mut self.units { unit.clear_devices(zone_id); }
+    }
+
+    fn fill_dma_translation_tables(&mut self, zone_id: usize, root: HostPhysAddr) {
+        for unit in &mut self.units { unit.fill_dma_translation_tables(zone_id, root); }
+    }
+
+    fn activate(&mut self) {
+        // One global firmware handoff, not one per unit or per later Zone.
+        // Otherwise the IGD unit would quiesce devices owned by the PCH unit.
+        if self.active { return; }
+        let assigned = self.units.iter().flat_map(|u| u.devices.iter().map(|(b, z)| (*b, *z)))
+            .collect::<BTreeMap<_, _>>();
+        self.units[0].quiesce_unassigned_pci_endpoints(&assigned);
+        self.units[0].wait_for_pci_dma_drain();
+        for unit in &mut self.units {
+            unit.clear_stale_faults();
+            unit.activate_dma_translation();
+        }
+        self.active = true;
+    }
+
+    fn flush(&mut self, zone_id: usize, bus: u8, dev_func: u8) {
+        let bdf = ((bus as u16) << 8) | dev_func as u16;
+        let index = super::drhd::route(&self.routing, bdf).expect("missing DRHD for flush");
+        self.units[index].flush(zone_id, bus, dev_func);
+    }
+
+    fn report_faults(&self) -> bool {
+        let mut fault = false;
+        for unit in &self.units { fault |= unit.report_faults(); }
+        fault
+    }
+}
+
+fn parse_root_dmar() -> Mutex<VtdManager> {
+    let dmar = acpi::root_get_table(&Signature::DMAR).unwrap();
+    let bytes = (0..dmar.get_len()).map(|i| dmar.get_u8(i)).collect::<Vec<_>>();
+    let routing = super::drhd::parse(&bytes).expect("unsupported/malformed DMAR routing");
+    let units = routing.iter().map(|route| {
+        info!("VT-d unit base={:#x} include_all={} endpoints={:?}",
+            route.base, route.include_all, route.endpoints);
+        new_unit(route.base)
+    }).collect();
+    Mutex::new(VtdManager { routing, units, active: false })
 }
 
 // called after acpi init
