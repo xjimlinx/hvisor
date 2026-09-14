@@ -80,10 +80,11 @@ pub fn seal_for_start(config: &HvZoneConfig) -> crate::error::HvResult<MutexGuar
             d.v_bus == 0 && d.v_device == 2 && d.v_function == 0 &&
         (config.num_pci_devs == 2 || {
             let pch = config.alloc_pci_devs[2];
-            // 00:1f.0 is host-owned, so place the identity-only stub at the
-            // otherwise empty 00:1e.0 slot. i915 scans by class, not BDF.
+            // 00:1f.0 is host-owned physically. Look up the identity-only
+            // stub through the otherwise empty 00:1e.0 slot, but present it
+            // to the guest at standard 00:1f.0 so ACPI and PCI agree.
             pch.domain == 0 && pch.bus == 0 && pch.device == 0x1e && pch.function == 0 &&
-                pch.v_bus == 0 && pch.v_device == 0x1e && pch.v_function == 0 &&
+                pch.v_bus == 0 && pch.v_device == 0x1f && pch.v_function == 0 &&
                 pch.dev_type == crate::pci::vpci_dev::VpciDevType::PchStub
         })
     };

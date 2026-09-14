@@ -109,7 +109,19 @@ impl Zone {
         Ok(())
     }
 
-    pub fn irq_bitmap_init(&mut self, irqs_bitmap: &[u32]) {}
+    /// Record the physical interrupt lines assigned to this zone.
+    ///
+    /// x86 uses the bitmap when a non-root guest programs its virtual
+    /// IOAPIC: only explicitly owned GSIs may be reflected into the real
+    /// IOAPIC.  Leaving this as a no-op made every non-root passthrough IRQ
+    /// silently virtual-only, which is insufficient for legacy INTx devices.
+    pub fn irq_bitmap_init(&mut self, irqs_bitmap: &[u32]) {
+        let mut inner = self.write();
+        let dst = inner.irq_bitmap_mut();
+        dst.fill(0);
+        let len = core::cmp::min(dst.len(), irqs_bitmap.len());
+        dst[..len].copy_from_slice(&irqs_bitmap[..len]);
+    }
 
     /// called after cpu_set is initialized
     pub fn arch_zone_pre_configuration(&mut self, config: &HvZoneConfig) -> HvResult {

@@ -88,6 +88,18 @@ ASMedia）；00:1c.7（组8，Wi-Fi）；00:1b.0（组5）、00:1c.0（组6）�
 
 ## BAR / IRQ 合同
 
+### x86 legacy INTx 路由实现（2026-09-14）
+
+Zone 配置中的 `interrupts` 现在会初始化 Zone 的 IRQ bitmap。非 Zone0
+只有在 bitmap 明确声明某个 GSI 时，客体写入虚拟 IOAPIC RTE 才会同步
+到物理 IOAPIC；其它 GSI 仍保持虚拟-only。这样避免按 BDF 猜测共享
+线路归属。核显 00:02.0 的 ACPI `_PRT` 为 INT-A→GSI16，因此 IGD
+候选显式声明 `[16]`；Zone0 现有 IRQ16 使用快照为空，仍需实机验证。
+
+这不是 MSI/MSI-X 代理：MSI 仍需单独的物理中断重映射/目标校验。不要
+把新的 GSI 直接加入 Zone1，也不要在未检查 `/proc/interrupts`、ACPI
+`_PRT` 和 Zone0 owner 前复用共享线路。
+
 | 节点 | 物理 MMIO 起点/大小 | 中断要求 |
 |---|---|---|
 | PCH xHCI | df330000/10000 | 已验证；切换 VT-d 前停止控制器 |
