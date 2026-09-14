@@ -281,12 +281,13 @@ impl ArchCpu {
 
         assert!(this_cpu_id() == self.cpuid);
         let mut per_cpu = this_cpu_data();
+        let zone_id = per_cpu.zone.as_ref().map(|zone| zone.id()).unwrap_or(0);
 
         // info!("run! cpuid: {:x}", self.cpuid);
 
         per_cpu.vcpu_state.store(VcpuState::Running);
         self.activate_vmx().unwrap();
-        info!("CPU{}: VMXON complete for Zone0", self.cpuid);
+        info!("CPU{}: VMXON complete for Zone{}", self.cpuid, zone_id);
 
         if !per_cpu.boot_cpu {
             if let Some(ipi_info) = ipi::get_ipi_info(self.cpuid) {
@@ -301,9 +302,9 @@ impl ArchCpu {
         self.virt_lapic.guest.base = (self.virt_lapic.guest.base & !0x100)
             | ((per_cpu.boot_cpu as u64) << 8);
         self.setup_vmcs(per_cpu.cpu_on_entry, false).unwrap();
-        info!("CPU{}: Zone0 VMCS ready", self.cpuid);
+        info!("CPU{}: Zone{} VMCS ready", self.cpuid, zone_id);
         per_cpu.activate_gpm();
-        info!("CPU{}: Zone0 EPT active", self.cpuid);
+        info!("CPU{}: Zone{} EPT active", self.cpuid, zone_id);
 
         if per_cpu.boot_cpu {
             // must be called after activate_gpm()
@@ -341,7 +342,7 @@ impl ArchCpu {
 
         clear_vectors(self.cpuid);
 
-        info!("CPU{}: launching Zone0", self.cpuid);
+        info!("CPU{}: launching Zone{}", self.cpuid, zone_id);
         #[cfg(z270_stage)]
         if per_cpu.boot_cpu && per_cpu.zone.as_ref().unwrap().id() == 0 {
             crate::arch::graphics::release_to_guest();
