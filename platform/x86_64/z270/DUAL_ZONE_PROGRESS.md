@@ -112,3 +112,8 @@ CPU按MADT顺序0/1/4/5与2/3/6/7分为两个完整物理核心的集合。
   下一步应做显示引擎安全交接和HPD中断代理，不能靠继续扩大RAM或PCI
   BAR映射解决。EDID 固件覆盖和1366x768强制模式已加入候选配置，但没有
   伪造“已亮屏”结论。
+
+- 针对 `SURF=0xc0000` 的下一项低风险修正已准备：i915 源码显示 Kaby Lake
+  默认开启 fastboot，`i915.fastboot=0` 会强制初始 modeset、清理继承的
+  BIOS plane 状态。该参数已写入远程候选 `zone1-fastboot-off.json`，当前
+  正在运行的 Zone1 未被重启或替换；验证仍需一次受控重启并观察实体 HDMI。
