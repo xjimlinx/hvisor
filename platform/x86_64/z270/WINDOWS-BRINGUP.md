@@ -42,9 +42,9 @@ ROM 映射 GPA 0xffff0000 → HPA 0x5f1000000，**绝不能写物理主板 flash
 
 ## 下一步按顺序完成
 
-1. 为 staging 增加明确的 firmware 能力协商；旧 hvisor 对模式 2 可能按
+1. [已实现，见下方进展] 为 staging 增加明确的 firmware 能力协商；旧 hvisor 对模式 2 可能按
    Multiboot2 解释，不能只依赖相同的旧 staging MAGIC。
-2. 实现有界的固件 loader 和清零：确认 Zone1 不在运行，预检全部映射，
+2. [已实现固定探针 loader，见下方] 实现有界的固件 loader 和清零：确认 Zone1 不在运行，预检全部映射，
    只写保留物理池、加载完整 ROM、设置模式后启动，不热停当前磁盘后端。
 3. 实机观测 HVFW0，并检查 Zone0 仍可远程访问；失败保留串口日志。
 4. 对 EDK II 制定 hvisor 平台实现，再启动 UEFI Shell。
@@ -58,3 +58,26 @@ ROM 映射 GPA 0xffff0000 → HPA 0x5f1000000，**绝不能写物理主板 flash
 - https://github.com/tianocore/edk2/blob/master/OvmfPkg/Library/PlatformInitLib/Platform.c
 - https://github.com/tianocore/edk2/blob/master/OvmfPkg/RUNTIME_CONFIG.md
 - Intel SDM 的处理器复位状态、VM-entry guest-state 和 RDMSR/WRMSR 章节。
+
+## 第二批进展：能力协商与固定探针 loader
+
+现有 hypercall 12 增加只读查询 `(arg0=0x46575031,arg1=0)`，仅在尚未
+封存且 Zone1 不存在时返回 `0x5a314602`。旧版本对非零 arg0 返回错误，
+因此不会误把模式 2 当 Multiboot2。普通 `(0,0)` staging 查询保持不变。
+
+配套驱动新增 `HVISOR_Z270_FIRMWARE_CAP`（ioctl 37），用户态独立程序为
+`hvisor-tool/extras/z270-firmware-probe.c`。只有明确指定 `--start-probe` 才
+可能写客体 RAM；`--dry-run` 不打开 /dev/hvisor。它只接受逐字节匹配已审查
+HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低端 16 MiB
+和 64 KiB ROM，清零已映射低端 RAM；检查 ABI、能力、仅有 Zone0，全部
+复制经过既有 one-shot staging，每页仍受 SEALED/Zone1 检查。
+
+本轮 hypervisor 编译、布局测试、设备契约测试再次通过；后端测试覆盖
+65,536 个 ROM 单字节破坏、旧 capability、ENOTTY、EBUSY、非法上传边界。
+驱动使用本地 **7.2.6-arch2-1** headers 完成编译检查；这不是目标机
+6.18.50-2-lts 模块，禁止直接部署本地 driver/hvisor.ko。
+实机 IPv6 SSH 再次超时，尚未安装候选或验证 HVFW0。
+
+下一实机步骤仍需：核实最新地址与内核 → 单独编译对应 headers 的驱动 →
+保留回退、安排不自动启动现有 Zone1 的一次性实验启动 → 只测试 HVFW0。
+不能在磁盘后端占用中的当前 Zone1 上热替换固件或强行卸载 hvisor.ko。

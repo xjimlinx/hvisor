@@ -47,7 +47,15 @@ fn root_page(gpa: usize, write: bool) -> HyperCallResult {
 
 pub fn dispatch(code: u64, arg0: usize, arg1: usize) -> HyperCallResult {
     if !is_this_root_zone() { return hv_result_err!(EPERM); }
-    if code == 12 { return if arg0 == 0 && arg1 == 0 { Ok(MAGIC) } else { hv_result_err!(EINVAL) }; }
+    if code == 12 {
+        if arg0 == 0 && arg1 == 0 { return Ok(MAGIC); }
+        if arg0 == crate::arch::firmware::PROBE_QUERY && arg1 == 0 {
+            let sealed = SEALED.lock();
+            if *sealed || find_zone(1).is_some() { return hv_result_err!(EBUSY); }
+            return Ok(crate::arch::firmware::PROBE_CAPABILITY);
+        }
+        return hv_result_err!(EINVAL);
+    }
     if code == 13 {
         let sealed = SEALED.lock();
         if *sealed || find_zone(1).is_some() { return hv_result_err!(EBUSY); }

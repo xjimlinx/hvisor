@@ -1,6 +1,10 @@
 //! Experimental Z270 firmware reset contract, not a PC/UEFI device model.
 //! Backing must come from the existing Zone1 pool, never physical flash.
 pub const BOOT_MODE: u32 = 2;
+// Queried through existing stage hypercall 12 with a nonzero argument.
+// Older implementations reject nonzero arguments, rather than misbooting mode 2.
+pub const PROBE_QUERY: usize = 0x46575031;
+pub const PROBE_CAPABILITY: usize = 0x5a314602;
 pub const RESET_VECTOR: u64 = 0xffff_fff0;
 pub const CS_BASE: usize = 0xffff_0000;
 pub const CS_SELECTOR: u16 = 0xf000;
