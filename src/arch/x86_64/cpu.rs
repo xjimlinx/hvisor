@@ -185,6 +185,7 @@ pub struct ArchCpu {
     vmxon_region: VmxRegion,
     vmcs_region: VmxRegion,
     vm_launch_guest_regs: GeneralRegisters,
+    firmware_reset: bool,
 }
 
 impl ArchCpu {
@@ -200,6 +201,7 @@ impl ArchCpu {
             vmxon_region: VmxRegion::fake_init(),
             vmcs_region: VmxRegion::fake_init(),
             vm_launch_guest_regs: GeneralRegisters::default(),
+            firmware_reset: false,
         }
     }
 
@@ -353,15 +355,24 @@ impl ArchCpu {
     }
 
     pub fn set_boot_cpu_vm_launch_regs(&mut self, rax: u64, rsi: u64) {
+        self.firmware_reset = false;
         self.vm_launch_guest_regs.rax = rax;
         self.vm_launch_guest_regs.rsi = rsi;
     }
 
     pub fn set_multiboot_boot_regs(&mut self, multiboot_info_addr: u64, kernel_entry: u64) {
+        self.firmware_reset = false;
         const MULTIBOOT2_MAGIC: u64 = 0x36D76289;
         self.vm_launch_guest_regs.rax = MULTIBOOT2_MAGIC;
         self.vm_launch_guest_regs.rbx = multiboot_info_addr;
         self.vm_launch_guest_regs.rsi = kernel_entry;
+    }
+
+    pub fn set_firmware_boot_regs(&mut self) {
+        self.firmware_reset = true;
+        self.vm_launch_guest_regs = GeneralRegisters::default();
+        // Reset EDX carries the processor signature; no Linux boot arguments.
+        self.vm_launch_guest_regs.rdx = unsafe { core::arch::x86_64::__cpuid(1) }.eax as u64;
     }
 
     fn activate_vmx(&mut self) -> HvResult {
@@ -439,6 +450,17 @@ impl ArchCpu {
         self.setup_vmcs_control()?;
         self.setup_vmcs_host(&self.host_stack_top as *const _ as usize)?;
         self.setup_vmcs_guest(entry, ROOT_ZONE_BOOT_STACK)?;
+        if !is_idle && self.firmware_reset && this_cpu_data().boot_cpu {
+            self.set_cr(0, 0x60000010)?;
+            self.set_cr(3, 0)?;
+            self.set_cr(4, 0)?; // Host-owned VMXE remains hidden by read shadow.
+            VmcsGuest16::CS_SELECTOR.write(crate::arch::firmware::CS_SELECTOR)?;
+            VmcsGuestNW::CS_BASE.write(crate::arch::firmware::CS_BASE)?;
+            VmcsGuestNW::RIP.write(crate::arch::firmware::IP)?;
+            VmcsGuestNW::RSP.write(0)?;
+            VmcsGuestNW::DR7.write(0x400)?;
+            info!("CPU{}: firmware reset vector 0xfffffff0 (RAM-only probe)", self.cpuid);
+        }
 
         Ok(())
     }

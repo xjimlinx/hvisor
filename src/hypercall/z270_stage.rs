@@ -110,6 +110,24 @@ fn igd_snapshot() {
 
 pub fn seal_for_start(config: &HvZoneConfig) -> crate::error::HvResult<MutexGuard<'static, bool>> {
     let mut sealed = SEALED.lock();
+    if crate::zone::zone_boot_mode(config.zone_id as usize).multiboot_enabled ==
+        crate::arch::firmware::BOOT_MODE {
+        let regions: alloc::vec::Vec<_> = config.memory_regions().iter()
+            .map(|r| (r.physical_start, r.virtual_start, r.size)).collect();
+        if *sealed || config.zone_id != 1 || config.cpus() != alloc::vec![2,3,6,7] ||
+            config.num_pci_devs != 0 || config.num_pci_bus != 0 ||
+            config.interrupts_bitmap().iter().any(|&word| word != 0) ||
+            !config.ivc_config().is_empty() ||
+            config.entry_point != crate::arch::firmware::RESET_VECTOR ||
+            config.arch_config.kernel_entry_gpa as u64 != crate::arch::firmware::RESET_VECTOR ||
+            config.arch_config.screen_base != 0 || config.arch_config.initrd_size != 0 ||
+            config.memory_regions().iter().any(|r| r.mem_type != MEM_TYPE_RAM) ||
+            !crate::arch::firmware::valid_ram_layout(&regions) {
+            return hv_result_err!(EINVAL, "firmware probe requires disjoint Zone1-only RAM and no devices");
+        }
+        *sealed = true;
+        return Ok(sealed);
+    }
     let asmedia = config.num_pci_devs == 4 && {
         let d = config.alloc_pci_devs[3];
         d.domain == 0 && d.bus == 4 && d.device == 0 && d.function == 0 &&

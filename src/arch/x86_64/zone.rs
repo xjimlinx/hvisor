@@ -122,7 +122,10 @@ impl Zone {
         let inner = self.read();
         let boot_mode = zone_boot_mode(zone_id);
 
-        if zone_id != 0 && boot_mode.multiboot_enabled != 0 {
+        if zone_id != 0 && boot_mode.multiboot_enabled == crate::arch::firmware::BOOT_MODE {
+            let cpuid = inner.cpu_set().first_cpu().unwrap();
+            get_cpu_data(cpuid).arch_cpu.set_firmware_boot_regs();
+        } else if zone_id != 0 && boot_mode.multiboot_enabled == 1 {
             info!("[ZONE{}] Using Multiboot2 boot mode", zone_id);
 
             inner.cpu_set().iter().for_each(|cpuid| {
@@ -183,6 +186,11 @@ impl Zone {
         }*/
 
         let boot_mode = zone_boot_mode(self.id());
+        if boot_mode.multiboot_enabled == crate::arch::firmware::BOOT_MODE {
+            // Firmware owns its handoff tables: never overwrite its RAM with
+            // Linux boot_params or copied physical-machine ACPI here.
+            return Ok(());
+        }
         if boot_mode.multiboot_enabled != 0 {
             boot::multiboot2_info_fill(
                 config,

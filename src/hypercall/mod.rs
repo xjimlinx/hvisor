@@ -225,9 +225,18 @@ impl<'a> HyperCall<'a> {
 
         let boot_mode_pa = self.hv_get_real_pa(boot_mode_ipa);
         let boot_mode = unsafe { &*(boot_mode_pa as *const HvZoneBootMode) };
-        if boot_mode.zone_id == 0 {
+        if boot_mode.zone_id == 0 || boot_mode.zone_id as usize >= crate::consts::MAX_ZONE_NUM {
             return hv_result_err!(EINVAL, "boot mode is not supported for the root zone");
         }
+        if find_zone(boot_mode.zone_id as usize).is_some() {
+            return hv_result_err!(EBUSY, "boot mode cannot change for an existing zone");
+        }
+        let mut supported = boot_mode.multiboot_enabled <= 1;
+        #[cfg(all(target_arch = "x86_64", z270_stage))]
+        { supported |= boot_mode.zone_id == 1 &&
+            boot_mode.multiboot_enabled == crate::arch::firmware::BOOT_MODE &&
+            boot_mode.multiboot_info_paddr == 0; }
+        if !supported { return hv_result_err!(EINVAL, "unsupported boot protocol"); }
 
         set_zone_boot_mode(boot_mode.zone_id as usize, *boot_mode);
         info!(

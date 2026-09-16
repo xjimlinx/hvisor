@@ -477,7 +477,11 @@ fn handle_msr_read(arch_cpu: &mut ArchCpu) -> HvResult {
 
 fn handle_msr_write(arch_cpu: &mut ArchCpu) -> HvResult {
     let rcx = arch_cpu.regs().rcx as u32;
-    let msr = Msr::try_from(rcx).unwrap();
+    let Ok(msr) = Msr::try_from(rcx) else {
+        // Unsupported WRMSR faults in the guest; it must not panic the host
+        // or skip the faulting instruction. Hardware #GP carries error code 0.
+        return Vmcs::inject_interrupt(13, Some(0));
+    };
     let value = (arch_cpu.regs().rax & 0xffff_ffff) | (arch_cpu.regs().rdx << 32);
     debug!("VM exit: WRMSR({:#x}) <- {:#x}", rcx, value);
 

@@ -112,6 +112,8 @@ pub struct HvZoneConfig {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HvZoneBootMode {
     pub zone_id: u32,
+    /// 0: Linux, 1: Multiboot2, 2: experimental Z270 firmware reset.
+    /// ABI field name retained; this is no longer a boolean on x86/Z270.
     pub multiboot_enabled: u32,
     pub multiboot_info_paddr: u64,
 }
