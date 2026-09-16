@@ -358,6 +358,28 @@ fn handle_io_instruction(arch_cpu: &mut ArchCpu, exit_info: &VmxExitInfo) -> HvR
         return Ok(());
     }
 
+    #[cfg(z270_minimal_acpi)]
+    if this_zone_id() == 1 {
+        if let Some(value) = super::guest_pm::read(
+            io_info.port, io_info.access_size as usize, super::hpet::current_time_nanos(),
+        ) {
+            if io_info.is_in {
+                let rax = &mut arch_cpu.regs_mut().rax;
+                match io_info.access_size {
+                    1 => *rax = (*rax & !0xff) | value as u64,
+                    2 => *rax = (*rax & !0xffff) | value as u64,
+                    4 => *rax = value as u64,
+                    _ => unreachable!(),
+                }
+            } else {
+                super::guest_pm::write(io_info.port, io_info.access_size as usize,
+                    arch_cpu.regs().rax as u32);
+            }
+            // Fixed-event/sleep writes stay virtual, never sent to the PCH.
+            arch_cpu.advance_guest_rip(exit_info.exit_instruction_length as _)?;
+            return Ok(());
+        }
+    }
     let mut value: u32 = 0;
     if !io_info.is_in {
         let rax = arch_cpu.regs().rax;

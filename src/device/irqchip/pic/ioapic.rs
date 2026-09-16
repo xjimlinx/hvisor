@@ -165,22 +165,8 @@ impl VirtIoApic {
                             // unsafe { configure_gsi_from_raw(index as _, *entry) };
                         }*/
                     }
-                    // Root may program the physical IOAPIC as before.  A
-                    // non-root zone may do so only for an explicitly owned
-                    // GSI from its interrupt bitmap.  This is the physical
-                    // delivery half of legacy INTx passthrough; without it
-                    // the guest sees an ACPI _PRT route but never receives
-                    // the interrupt.  Do not infer ownership from the PCI
-                    // BDF: shared GSI lines must be opted in explicitly.
-                    let owns_gsi = zone_id == 0
-                        || this_zone().read().irq_in_zone(index as u32);
-                    if owns_gsi {
-                        if zone_id != 0 {
-                            info!(
-                                "zone {} owns physical IOAPIC GSI {} (legacy INTx)",
-                                zone_id, index
-                            );
-                        }
+                    if zone_id == 0 {
+                        // only root zone modify the real I/O APIC
                         unsafe { configure_gsi_from_raw(index as _, *entry) };
                     }
                 }

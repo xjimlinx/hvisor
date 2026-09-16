@@ -1,5 +1,6 @@
 //! Board-scoped, one-shot RAM-only Zone1 loader and polled UART log.
-//! Never grants Zone0 EPT or DMA access to the reserved target RAM.
+//! Loader never grants mappings. The board defines a trusted-backend CPU alias;
+//! VT-d explicitly excludes it, and staging remains one-shot.
 use crate::{config::{HvZoneConfig, MEM_TYPE_RAM}, cpu_data::this_zone,
     memory::MemFlags, zone::{find_zone, is_this_root_zone}, hypercall::HyperCallResult};
 use spin::{Mutex, MutexGuard};
@@ -58,6 +59,7 @@ pub fn dispatch(code: u64, arg0: usize, arg1: usize) -> HyperCallResult {
     }
     if arg1 != PAGE { return hv_result_err!(EINVAL); }
     let dest = root_page(arg0, true)?;
+    if code == 15 { igd_snapshot(); }
     let mut log = if code == 15 { HOST_LOG.lock() } else { LOG.lock() };
     let count = log.len.min(PAGE);
     for i in 0..count {
@@ -68,9 +70,53 @@ pub fn dispatch(code: u64, arg0: usize, arg1: usize) -> HyperCallResult {
     Ok(count)
 }
 
+/// Root-requested, rate-limited, read-only snapshot; no arbitrary MMIO address API.
+fn igd_snapshot() {
+    use core::{ptr::read_volatile, sync::atomic::{AtomicU64, Ordering}};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = crate::arch::hpet::current_time_nanos();
+    let old = LAST.load(Ordering::Relaxed);
+    if now.wrapping_sub(old) < 10_000_000_000 ||
+        LAST.compare_exchange(old, now, Ordering::Relaxed, Ordering::Relaxed).is_err() { return; }
+    let Some(zone) = find_zone(1) else { return; };
+    let inner = zone.read();
+    if !matches!(unsafe { inner.gpm().page_table_query(0xdd000000) },
+        Ok((0xdd000000, flags, _)) if flags.contains(MemFlags::READ)) { return; }
+    let cfg = 0xe0010000usize;
+    unsafe {
+        if read_volatile(cfg as *const u32) != 0x59128086 ||
+            read_volatile((cfg + 0x10) as *const u32) & !15 != 0xdd000000 { return; }
+        info!("IGD SNAP ATS={:#x} PASID={:#x} BDSM={:#x} ASLS={:#x}",
+            read_volatile((cfg+0x206) as *const u16),
+            read_volatile((cfg+0x106) as *const u16),
+            read_volatile((cfg+0x5c) as *const u32),
+            read_volatile((cfg+0xfc) as *const u32));
+        // Current validated plane: GGTT c0000, 1366x768 XR24, stride 5504.
+        let mut invalid = 0;
+        let mut unmapped = 0;
+        for index in 0xc0usize..0x4c8 {
+            let pte = read_volatile((0xdd800000 + index*8) as *const u64);
+            if pte & 1 == 0 { invalid += 1; continue; }
+            let iova = (pte & 0x000ffffffffff000) as usize;
+            let mapping = inner.gpm().page_table_query(iova);
+            if mapping.is_err() { unmapped += 1; }
+            if index == 0xc0 || index == 0x4c7 {
+                info!("IGD SNAP GGTT[{:x}]={:#x} EPT={:?}", index, pte, mapping);
+            }
+        }
+        info!("IGD SNAP scanout pages=1032 invalid={} unmapped={}", invalid, unmapped);
+    }
+}
+
 pub fn seal_for_start(config: &HvZoneConfig) -> crate::error::HvResult<MutexGuard<'static, bool>> {
     let mut sealed = SEALED.lock();
-    let igpu = (config.num_pci_devs == 2 || config.num_pci_devs == 3) && config.num_pci_bus == 1 && {
+    let asmedia = config.num_pci_devs == 4 && {
+        let d = config.alloc_pci_devs[3];
+        d.domain == 0 && d.bus == 4 && d.device == 0 && d.function == 0 &&
+            d.v_bus == 0 && d.v_device == 0x1c && d.v_function == 0 &&
+            d.dev_type == crate::pci::vpci_dev::VpciDevType::Physical
+    };
+    let igpu = (config.num_pci_devs == 2 || config.num_pci_devs == 3 || asmedia) && config.num_pci_bus == 1 && {
         let bridge = config.alloc_pci_devs[0];
         let d = config.alloc_pci_devs[1];
         bridge.domain == 0 && bridge.bus == 0 && bridge.device == 0 && bridge.function == 0 &&
@@ -99,13 +145,29 @@ pub fn seal_for_start(config: &HvZoneConfig) -> crate::error::HvResult<MutexGuar
             return hv_result_err!(EINVAL);
         }
         if r.mem_type != MEM_TYPE_RAM {
+            if r.mem_type == crate::config::MEM_TYPE_VIRTIO &&
+                (r.physical_start == 0x90000000 || r.physical_start == 0x90001000) &&
+                r.virtual_start == r.physical_start &&
+                r.size == 0x1000 && igpu {
+                continue;
+            }
             if !igpu || r.mem_type != crate::config::MEM_TYPE_IO { return hv_result_err!(EINVAL); }
             let valid = [(0xdd000000u64,0x1000000u64),(0xb0000000,0x10000000),
-                         (0xf000,0x1000),(0x7a792000,0x3000),(0x7c000000,0x4000000)];
-            if !valid.iter().any(|(s,n)| r.physical_start == *s && r.virtual_start == *s && r.size == *n) {
+                         (0xf000,0x1000),(0x7a792000,0x3000),(0x7c000000,0x4000000),
+                         // Full firmware IGD RMRR, including the 8 MiB before BDSM.
+                         // Keep the old subrange accepted for rollback configurations.
+                         (0x7b800000,0x4800000)];
+            let usb_bar = asmedia && r.physical_start == 0xdf200000 &&
+                r.virtual_start == 0xdf200000 && r.size == 0x8000;
+            if !usb_bar && !valid.iter().any(|(s,n)| r.physical_start == *s && r.virtual_start == *s && r.size == *n) {
                 return hv_result_err!(EINVAL);
             }
         }
+    }
+    if asmedia && !config.memory_regions().iter().any(|r|
+        r.mem_type == crate::config::MEM_TYPE_IO && r.physical_start == 0xdf200000 &&
+        r.virtual_start == 0xdf200000 && r.size == 0x8000) {
+        return hv_result_err!(EINVAL);
     }
     // Fail closed even if zone_create fails part-way; a host reboot is needed to retry.
     *sealed = true;

@@ -88,17 +88,23 @@ ASMedia）；00:1c.7（组8，Wi-Fi）；00:1b.0（组5）、00:1c.0（组6）�
 
 ## BAR / IRQ 合同
 
-### x86 legacy INTx 路由实现（2026-09-14）
+### x86 中断路由审计（2026-09-15）
 
-Zone 配置中的 `interrupts` 现在会初始化 Zone 的 IRQ bitmap。非 Zone0
-只有在 bitmap 明确声明某个 GSI 时，客体写入虚拟 IOAPIC RTE 才会同步
-到物理 IOAPIC；其它 GSI 仍保持虚拟-only。这样避免按 BDF 猜测共享
-线路归属。核显 00:02.0 的 ACPI `_PRT` 为 INT-A→GSI16，因此 IGD
-候选显式声明 `[16]`；Zone0 现有 IRQ16 使用快照为空，仍需实机验证。
+撤回 75906d7 中非根 Zone 直接修改物理 IOAPIC 的候选实现：仅检查
+IRQ bitmap 不能建立排他所有权，Zone0 仍可覆盖同一条 RTE，且未处理
+跨 Zone 的电平中断/EOI。恢复根 Zone 才能写物理 IOAPIC 的行为，
+Zone1 配置恢复 `interrupts=[]`。保留该提交中的 PCH stub BDF 修正。
 
-这不是 MSI/MSI-X 代理：MSI 仍需单独的物理中断重映射/目标校验。不要
-把新的 GSI 直接加入 Zone1，也不要在未检查 `/proc/interrupts`、ACPI
-`_PRT` 和 Zone0 owner 前复用共享线路。
+核显 PCI 原始 Interrupt Pin 字节为 0x01（INT-A）；现有 `_PRT`
+INT-A→GSI16 不因此需要改为 INT-B。Linux 的 PCI INT 路由警告不等于
+MSI 失效。原生 i915 已启用 MSI；原生 remappable MSI 地址不能照搬到
+关闭中断重映射的客体。
+
+x86 capability handler 当前直接透传 MSI 配置，收到中断的物理 CPU
+负责向其运行中的客体注入；这不是具备 owner 目标校验的 MSI 代理。
+后续必须核对客体实际 MSI 地址、向量、APIC ID 与 owner CPU 集合，
+以及中断计数，再判断显示故障是否由中断引起。未证明此前失联是 IRQ
+改动导致；原生 Wi-Fi 已恢复。回退不代表双 Zone HDMI 已验收。
 
 | 节点 | 物理 MMIO 起点/大小 | 中断要求 |
 |---|---|---|

@@ -325,11 +325,29 @@ impl RootAcpi {
         banned_tables: &BTreeSet<Signature>,
         cpu_set: &CpuSet,
         minimal: bool,
+        non_root: bool,
     ) {
         let mut rsdp = self.rsdp.clone();
         let mut tables = self.tables.clone();
         let mut ssdts = self.ssdts.clone();
         let mut pointers = self.pointers.clone();
+        #[cfg(z270_minimal_acpi)]
+        if minimal && non_root {
+            if let Some(fadt) = tables.get_mut(&Signature::FADT) {
+                for &(offset, value) in super::guest_pm::DWORD_PATCHES {
+                    fadt.set_u32(value, offset);
+                }
+                for &(offset, value) in super::guest_pm::BYTE_PATCHES {
+                    fadt.set_u8(value, offset);
+                }
+                // Legacy 24-bit timer; no firmware reset or S4BIOS mechanism.
+                let flags = fadt.get_u32(112) & !((1 << 8) | (1 << 10));
+                fadt.set_u32(flags, 112);
+                // Extended PM GAS fields must not override our legacy blocks.
+                for offset in 148..244.min(fadt.get_len()) { fadt.set_u8(0, offset); }
+                info!("Zone1 ACPI-only virtual PM: SCI_EN=1, 24-bit PM timer, no host SMI/GPE");
+            }
+        }
         // Owned image remains alive until every guest table has been copied.
         let mut minimal_rsdt: Vec<u8> = Vec::new();
         #[cfg(z270_minimal_acpi)]
@@ -840,6 +858,7 @@ pub fn copy_to_guest_memory_region(config: &HvZoneConfig, cpu_set: &CpuSet) {
         &banned,
         cpu_set,
         cfg!(z270_minimal_acpi) && (config.zone_id == 0 || config.zone_id == 1),
+        config.zone_id != 0,
     );
 }
 

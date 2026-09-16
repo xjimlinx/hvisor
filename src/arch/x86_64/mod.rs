@@ -22,6 +22,8 @@ pub mod cpu;
 pub mod cpuid;
 pub mod entry;
 pub mod graphics;
+#[cfg(z270_minimal_acpi)]
+pub mod guest_pm;
 pub mod hpet;
 pub mod hypercall;
 pub mod idt;

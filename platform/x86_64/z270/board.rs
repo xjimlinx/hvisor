@@ -94,8 +94,16 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 32] = [
         mem_type: MEM_TYPE_RAM,
         physical_start: 0x1_0000_0000,
         virtual_start: 0x1_0000_0000,
-        // Zone1 owns [0x5f0000000, 0x870000000); never map it in Zone0.
+        // Zone1 owns [0x5f0000000, 0x870000000); no identity mapping in Zone0.
         size: 0x4_f000_0000,
+    },
+    HvConfigMemoryRegion {
+        // Trusted userspace backend CPU-only alias, excluded from VT-d by
+        // z270_backend_dma_root. Reserved in Linux, never allocatable RAM.
+        mem_type: MEM_TYPE_RESERVED,
+        physical_start: 0x5_f000_0000,
+        virtual_start: 0x10_0000_0000,
+        size: 0x2_8000_0000,
     },
     HvConfigMemoryRegion {
         // Remaining native high RAM after the 10 GiB Zone1 reservation.
@@ -170,13 +178,8 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 32] = [
         virtual_start: 0xdf32_0000,
         size: 0x10000,
     },
-    // ASMedia USB 3.1, physical 04:00.0, BAR0 including MSI-X table.
-    HvConfigMemoryRegion {
-        mem_type: MEM_TYPE_IO,
-        physical_start: 0xdf20_0000,
-        virtual_start: 0xdf20_0000,
-        size: 0x8000,
-    },
+    // ASMedia 04:00.0 BAR0/MSI-X page belongs exclusively to Zone1.
+    // Do not map it into Zone0 even before Zone1 has started.
     // AX210: physical 05:00.0, BAR0 including MSI-X table.
     HvConfigMemoryRegion {
         mem_type: MEM_TYPE_IO,
@@ -323,7 +326,6 @@ zone0_native_inventory! {
     ("ahci",     0, 0x17, 0,  4, "root"),
     ("rp17",     0, 0x1b, 0,  5, "root"),
     ("rp1",      0, 0x1c, 0,  6, "root"),
-    ("rp5",      0, 0x1c, 4,  7, "root"),
     ("rp8",      0, 0x1c, 7,  8, "root"),
     ("rp9",      0, 0x1d, 0,  9, "root"),
     ("lpc",      0, 0x1f, 0, 10, "root"),
@@ -333,9 +335,13 @@ zone0_native_inventory! {
     ("ethernet", 0, 0x1f, 6, 11, "root"),
     ("gpu",      1, 0x00, 0,  1, "peg"),
     ("hdmi",     1, 0x00, 1,  1, "peg"),
-    ("asmedia",  4, 0x00, 0, 12, "rp5"),
     ("wifi",     5, 0x00, 0, 13, "rp8"),
 }
+
+// Physical 00:1c.4 -> 04:00.0 is reserved outside Zone0. hvisor preserves
+// firmware bridge routing; Zone1 sees the endpoint flattened at 00:1c.0.
+// Neither guest gets the upstream bridge's secondary-bus-reset control.
+pub const Z270_RESERVED_USB_PATH: &[(u8, u8, u8)] = &[(0, 0x1c, 4), (4, 0, 0)];
 
 #[cfg(all(graphics))]
 pub const GRAPHICS_FONT: &[u8] =

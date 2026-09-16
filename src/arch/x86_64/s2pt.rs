@@ -256,6 +256,33 @@ unsafe fn invs2pt(inv_type: InvS2PTType, s2ptp: u64) {
 
 pub struct S2PTInstr;
 
+/// Zone0 CPU access to the backend alias must not imply device DMA access.
+/// Keep the original lower-level tables shared for ordinary RAM/MMIO, but
+/// give VT-d a private PML4 and PDPT with the 64..74 GiB alias removed.
+/// Frames remain owned for the lifetime of the hypervisor.
+#[cfg(z270_minimal_acpi)]
+fn z270_backend_dma_root(root: HostPhysAddr) -> HostPhysAddr {
+    use crate::memory::Frame;
+    static TABLES: spin::Once<(Frame, Frame)> = spin::Once::new();
+    let tables = TABLES.call_once(|| unsafe {
+        let pml4 = Frame::new_zero().expect("backend DMA PML4 allocation");
+        let pdpt = Frame::new_zero().expect("backend DMA PDPT allocation");
+        let source = root as *const u64;
+        let entry = source.read();
+        assert!(entry & 7 != 0 && entry & (1 << 7) == 0);
+        core::ptr::copy_nonoverlapping(source, pml4.start_paddr() as *mut u64, 512);
+        let source_pdpt = (entry & 0x000f_ffff_ffff_f000) as *const u64;
+        core::ptr::copy_nonoverlapping(source_pdpt, pdpt.start_paddr() as *mut u64, 512);
+        for slot in 64..74 {
+            (pdpt.start_paddr() as *mut u64).add(slot).write(0);
+        }
+        (pml4.start_paddr() as *mut u64).write(
+            pdpt.start_paddr() as u64 | (entry & !0x000f_ffff_ffff_f000));
+        (pml4, pdpt)
+    });
+    tables.0.start_paddr()
+}
+
 impl PagingInstr for S2PTInstr {
     unsafe fn activate(root_paddr: HostPhysAddr) {
         let s2ptp = S2PTPointer::from_table_phys(root_paddr).bits();
@@ -265,7 +292,13 @@ impl PagingInstr for S2PTInstr {
         // if this cpu is boot cpu and it is running
         if this_cpu_data().vcpu_state.is_running() && this_cpu_data().boot_cpu {
             #[cfg(intel_vtd)]
-            iommu::fill_dma_translation_tables(this_zone_id(), root_paddr);
+            {
+                #[cfg(z270_minimal_acpi)]
+                let root_paddr = if this_zone_id() == 0 {
+                    z270_backend_dma_root(root_paddr)
+                } else { root_paddr };
+                iommu::fill_dma_translation_tables(this_zone_id(), root_paddr);
+            }
         }
     }
 

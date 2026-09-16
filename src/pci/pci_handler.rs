@@ -777,6 +777,10 @@ fn handle_endpoint_access(
                                     );
                                 } else {
                                     let gpm = guard.gpm_mut();
+                                    // A BAR rewrite must not discard the original memory/cache policy.
+                                    let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                        .map(|region| region.flags)
+                                        .unwrap_or(MemFlags::READ | MemFlags::WRITE);
                                     if !gpm
                                         .try_delete(
                                             old_vaddr.try_into().unwrap(),
@@ -789,7 +793,7 @@ fn handle_endpoint_access(
                                             new_vaddr_aligned as GuestPhysAddr,
                                             paddr as HostPhysAddr,
                                             bar_size as _,
-                                            MemFlags::READ | MemFlags::WRITE,
+                                            mapping_flags,
                                         ),
                                     )?;
                                 }
@@ -917,6 +921,10 @@ fn handle_endpoint_access(
                                 } else {
                                     // Delete old gpm mapping if it exists
                                     let gpm = guard.gpm_mut();
+                                    // A BAR rewrite must not discard the original memory/cache policy.
+                                    let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                        .map(|region| region.flags)
+                                        .unwrap_or(MemFlags::READ | MemFlags::WRITE);
                                     if !gpm
                                         .try_delete(
                                             old_vaddr.try_into().unwrap(),
@@ -932,7 +940,7 @@ fn handle_endpoint_access(
                                             new_vaddr as GuestPhysAddr,
                                             paddr as HostPhysAddr,
                                             bar_size as _,
-                                            MemFlags::READ | MemFlags::WRITE,
+                                            mapping_flags,
                                         ),
                                     )?;
                                 }
@@ -1069,6 +1077,10 @@ fn handle_endpoint_access(
                                 let zone = this_zone();
                                 let mut guard = zone.write();
                                 let gpm = guard.gpm_mut();
+                                // A BAR rewrite must not discard the original memory/cache policy.
+                                let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                    .map(|region| region.flags)
+                                    .unwrap_or(MemFlags::READ | MemFlags::WRITE);
 
                                 if !gpm
                                     .try_delete(old_vaddr.try_into().unwrap(), rom_size as usize)
@@ -1081,7 +1093,7 @@ fn handle_endpoint_access(
                                         new_vaddr_aligned as GuestPhysAddr,
                                         paddr as HostPhysAddr,
                                         rom_size as _,
-                                        MemFlags::READ | MemFlags::WRITE,
+                                        mapping_flags,
                                     ),
                                 )?;
                                 drop(guard);
@@ -1279,6 +1291,10 @@ fn handle_pci_bridge_access(
                                     );
                                 } else {
                                     let gpm = guard.gpm_mut();
+                                    // A BAR rewrite must not discard the original memory/cache policy.
+                                    let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                        .map(|region| region.flags)
+                                        .unwrap_or(MemFlags::READ | MemFlags::WRITE);
                                     if !gpm
                                         .try_delete(
                                             old_vaddr.try_into().unwrap(),
@@ -1291,7 +1307,7 @@ fn handle_pci_bridge_access(
                                             new_vaddr_aligned as GuestPhysAddr,
                                             paddr as HostPhysAddr,
                                             bar_size as _,
-                                            MemFlags::READ | MemFlags::WRITE,
+                                            mapping_flags,
                                         ),
                                     )?;
                                 }
@@ -1399,6 +1415,10 @@ fn handle_pci_bridge_access(
                                 } else {
                                     // Delete old gpm mapping if it exists
                                     let gpm = guard.gpm_mut();
+                                    // A BAR rewrite must not discard the original memory/cache policy.
+                                    let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                        .map(|region| region.flags)
+                                        .unwrap_or(MemFlags::READ | MemFlags::WRITE);
                                     if !gpm
                                         .try_delete(
                                             old_vaddr.try_into().unwrap(),
@@ -1414,7 +1434,7 @@ fn handle_pci_bridge_access(
                                             new_vaddr_aligned as GuestPhysAddr,
                                             paddr as HostPhysAddr,
                                             bar_size as _,
-                                            MemFlags::READ | MemFlags::WRITE,
+                                            mapping_flags,
                                         ),
                                     )?;
                                 }
@@ -1546,6 +1566,10 @@ fn handle_pci_bridge_access(
                                 let zone = this_zone();
                                 let mut guard = zone.write();
                                 let gpm = guard.gpm_mut();
+                                // A BAR rewrite must not discard the original memory/cache policy.
+                                let mapping_flags = gpm.get_region(old_vaddr as GuestPhysAddr)
+                                    .map(|region| region.flags)
+                                    .unwrap_or(MemFlags::READ | MemFlags::WRITE);
 
                                 if !gpm
                                     .try_delete(old_vaddr.try_into().unwrap(), rom_size as usize)
@@ -1558,7 +1582,7 @@ fn handle_pci_bridge_access(
                                         new_vaddr_aligned as GuestPhysAddr,
                                         paddr as HostPhysAddr,
                                         rom_size as _,
-                                        MemFlags::READ | MemFlags::WRITE,
+                                        mapping_flags,
                                     ),
                                 )?;
                                 drop(guard);

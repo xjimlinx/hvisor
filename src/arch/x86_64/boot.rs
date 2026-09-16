@@ -256,6 +256,8 @@ impl BootParams {
                 e820_type = E820Type::E820_ACPI;
             } else if i == config.arch_config.uefi_memory_region_id {
                 e820_type = E820Type::E820_RESERVED;
+            } else if mem_region.mem_type == MEM_TYPE_RESERVED {
+                e820_type = E820Type::E820_RESERVED;
             } else if mem_region.mem_type == MEM_TYPE_RAM {
                 e820_type = E820Type::E820_RAM;
             } else if mem_region.mem_type == MEM_TYPE_FIRMWARE_NVS {
