@@ -112,7 +112,8 @@ HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低
 64 KiB 两段，PCI devices=0/buses=0。之后仍能通过 SSH 执行命令。
 这证明复位取指和该串口探针可执行，不证明 UEFI、AP 启动或 Windows 兼容性。
 
-发现一条 `VT-d FRCD[0]: sid=00:02.0, reason=0x01, addr=0x0`。
+发现两次 `VT-d FRCD[0]: sid=00:02.0, reason=0x01, addr=0x0`（探针前后各一次），
+启动阶段另有 `PCI BME STUCK 00:00.0`。
 本次无核显分配，不能归因为 Windows 或宣称无硬件错误；后续隔离核显固件
 残余 DMA 状态时需核对，不能放开所有 DMA 来掩盖。没有为此改动设备策略。
 
@@ -120,3 +121,7 @@ HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低
 `hvisor/artifacts/windows-uefi-probe-20260916-v2/probe-{uart,hvisor}.log`。
 验证后安排一次性返回原有 `hvisor-z270-experimental` 双 Linux 项，
 不让探针长期占据 Zone1。
+
+恢复状态：已选择原有启动项并发出 reboot；随后 PPP IPv4、两条已知 PPP IPv6、
+Wi-Fi IPv4/IPv6 的 SSH 检查均超时。**尚未确认恢复双 Linux 成功**，
+已请求现场屏幕信息；不可据此断言卡在固件、网络或 Zone1。
