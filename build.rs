@@ -161,6 +161,16 @@ fn main() {
     let arch = build_env.arch;
     let board = build_env.board;
     let bid = build_env.bid;
+    println!("cargo:rerun-if-env-changed=Z270_FIRMWARE_PROBE_BOOT");
+    println!("cargo:rustc-check-cfg=cfg(z270_firmware_probe_boot)");
+    match env::var("Z270_FIRMWARE_PROBE_BOOT").as_deref() {
+        Err(_) | Ok("0") => {},
+        Ok("1") => {
+            assert!(arch == "x86_64" && board == "z270", "probe boot is Z270-only");
+            println!("cargo:rustc-cfg=z270_firmware_probe_boot");
+        },
+        _ => panic!("Z270_FIRMWARE_PROBE_BOOT must be unset, 0, or 1"),
+    }
     println!("cargo:rustc-check-cfg=cfg(z270_stage)");
     if arch == "x86_64" && board == "z270" {
         println!("cargo:rustc-cfg=z270_stage");

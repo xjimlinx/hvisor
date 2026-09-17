@@ -209,13 +209,26 @@ impl BootParams {
         boot_params.cmd_line_ptr = config.arch_config.cmdline_load_gpa as _;
         // copy cmdline manually for root zone
         if config.zone_id == 0 {
+            let cmdline = crate::platform::ROOT_ZONE_CMDLINE.as_bytes();
+            // Separate experimental binary only. Never change persistent service
+            // enablement or allow the existing disk-backed Zone1 to auto-start.
+            #[cfg(z270_firmware_probe_boot)]
+            let probe_cmdline = {
+                assert_eq!(cmdline.last(), Some(&0));
+                let mut bytes = cmdline[..cmdline.len() - 1].to_vec();
+                bytes.extend_from_slice(b" systemd.mask=hvisor-zone0.service systemd.mask=hvisor-zone1.service systemd.mask=hvisor-virtio-test.service hvisor.firmware_probe=1\0");
+                assert!(bytes.len() <= 4096);
+                bytes
+            };
+            #[cfg(z270_firmware_probe_boot)]
+            let cmdline = probe_cmdline.as_slice();
             unsafe {
                 core::ptr::copy_nonoverlapping(
-                    crate::platform::ROOT_ZONE_CMDLINE.as_ptr(),
+                    cmdline.as_ptr(),
                     gpm.page_table_query(config.arch_config.cmdline_load_gpa)
                         .unwrap()
                         .0 as *mut u8,
-                    crate::platform::ROOT_ZONE_CMDLINE.len(),
+                    cmdline.len(),
                 )
             };
         }
