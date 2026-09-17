@@ -229,7 +229,6 @@ impl ArchCpu {
 
         assert!(this_cpu_id() == self.cpuid);
 
-        this_cpu_data().vcpu_state.store(VcpuState::Stopped);
         self.activate_vmx().unwrap();
         info!("CPU{}: VMXON complete for parking VM", self.cpuid);
 
@@ -259,6 +258,9 @@ impl ArchCpu {
         unsafe {
             PARKING_MEMORY_SET.get().unwrap().activate();
             info!("CPU{}: entering parking VM", self.cpuid);
+            // Release-publish only after guest VMCS/EPT are no longer active.
+            // Shutdown may reclaim guest resources as soon as it sees Stopped.
+            this_cpu_data().vcpu_state.store(VcpuState::Stopped);
             self.vmx_launch();
         }
     }
@@ -439,6 +441,11 @@ impl ArchCpu {
 
     // after activate_vmx
     fn setup_vmcs(&mut self, entry: GuestPhysAddr, is_idle: bool) -> HvResult {
+        // Never free/reuse a VMCS page that is still active on this pCPU.
+        let previous = self.vmcs_region.start_paddr() as usize;
+        if previous != 0 {
+            Vmcs::clear(previous)?;
+        }
         self.vmcs_region = VmxRegion::new(self.vmcs_revision_id, false);
 
         let start_paddr = self.vmcs_region.start_paddr() as usize;

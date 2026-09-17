@@ -41,6 +41,11 @@ use numeric_enum_macro::numeric_enum;
 #[cfg(z270_stage)]
 pub(crate) mod z270_stage;
 
+// Serialize x86 create/destroy, but do not hold a Zone write lock while
+// waiting for remote CPUs: their VM-exit path can require the same Zone.
+#[cfg(target_arch = "x86_64")]
+static ZONE_LIFECYCLE: spin::Mutex<()> = spin::Mutex::new(());
+
 numeric_enum! {
     #[repr(u64)]
     #[derive(Debug, Eq, PartialEq, Copy, Clone)]
@@ -301,6 +306,9 @@ impl<'a> HyperCall<'a> {
                 )
             );
         }
+        #[cfg(target_arch = "x86_64")]
+        let _lifecycle = ZONE_LIFECYCLE.try_lock().ok_or_else(||
+            hv_err!(EBUSY, "another zone lifecycle operation is in progress"))?;
         #[cfg(z270_stage)]
         let _stage_lock = z270_stage::seal_for_start(config)?;
         let zone_result = zone_create(config);
@@ -335,6 +343,9 @@ impl<'a> HyperCall<'a> {
         if zone_id == 0 {
             return hv_result_err!(EINVAL);
         }
+        #[cfg(target_arch = "x86_64")]
+        let _lifecycle = ZONE_LIFECYCLE.try_lock().ok_or_else(||
+            hv_err!(EBUSY, "another zone lifecycle operation is in progress"))?;
         // avoid virtio daemon send sgi to the shutdowning zone
         #[cfg(not(target_arch = "loongarch64"))]
         let mut map_irq = VIRTIO_IRQS.lock();
@@ -348,9 +359,9 @@ impl<'a> HyperCall<'a> {
                 )
             }
         };
-        let zone_w = zone.write();
+        let cpus = zone.cpu_set();
 
-        zone_w.cpu_set().iter().for_each(|cpu_id| {
+        cpus.iter().for_each(|cpu_id| {
             let _lock = get_cpu_data(cpu_id).ctrl_lock.lock();
             get_cpu_data(cpu_id).cpu_on_entry = INVALID_ADDRESS;
             #[cfg(target_arch = "loongarch64")]
@@ -363,28 +374,35 @@ impl<'a> HyperCall<'a> {
             }
         });
 
+        #[cfg(not(target_arch = "loongarch64"))]
+        drop(map_irq);
+        #[cfg(not(target_arch = "x86_64"))]
         let mut count: usize = 0;
-
-        // wait all zone's cpus shutdown (Stopped only: includes Blocked / Ready / Running)
-        while zone_w.cpu_set().iter().any(|cpu_id| {
-            let _lock = get_cpu_data(cpu_id).ctrl_lock.lock();
-            let not_stopped = !get_cpu_data(cpu_id).vcpu_state.is_stopped();
-            count += 1;
-            if count > MAX_WAIT_TIMES {
-                if not_stopped {
-                    error!("cpu {} cannot be shut down", cpu_id);
-                    return false;
-                }
+        #[cfg(target_arch = "x86_64")]
+        let wait_start = crate::arch::hpet::current_time_nanos();
+        loop {
+            if cpus.iter().all(|id| get_cpu_data(id).vcpu_state.is_stopped()) {
+                break;
             }
-            not_stopped
-        }) {}
+            #[cfg(not(target_arch = "x86_64"))]
+            { count += 1; }
+            #[cfg(target_arch = "x86_64")]
+            let expired = crate::arch::hpet::current_time_nanos()
+                .wrapping_sub(wait_start) >= 5_000_000_000;
+            #[cfg(not(target_arch = "x86_64"))]
+            let expired = count >= MAX_WAIT_TIMES;
+            if expired {
+                // Partial stop is not success: retain Zone, EPT and DMA ownership.
+                return hv_result_err!(EBUSY, "zone stop timed out; resources retained");
+            }
+            core::hint::spin_loop();
+        }
 
-        zone_w.cpu_set().iter().for_each(|cpu_id| {
+        cpus.iter().for_each(|cpu_id| {
             let _lock = get_cpu_data(cpu_id).ctrl_lock.lock();
             get_cpu_data(cpu_id).zone = None;
         });
 
-        drop(zone_w);
         zone.arch_irqchip_reset();
 
         // Remove viommu instance related to this zone.

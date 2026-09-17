@@ -1041,9 +1041,7 @@ pub fn zone_create(config: &HvZoneConfig) -> HvResult<Arc<Zone>> {
             let cpu_data = get_cpu_data(cpuid);
             cpu_data.zone = Some(new_zone_pointer.clone());
             //chose boot cpu
-            if cpuid == cpu_set.first_cpu().unwrap() {
-                cpu_data.boot_cpu = true;
-            }
+            cpu_data.boot_cpu = cpuid == cpu_set.first_cpu().unwrap();
             cpu_data.cpu_on_entry = config.entry_point as _;
             cpu_data.dtb_ipa = dtb_ipa as _;
             #[cfg(target_arch = "aarch64")]
