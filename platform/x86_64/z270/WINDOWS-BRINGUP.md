@@ -2,7 +2,7 @@
 
 分支：`feat/z270-windows-uefi-bringup`，基线 `911066f`。
 目标仍是 Z270 实机上的 Linux Zone0 + Windows Zone1，不是 QEMU 虚拟机。
-当前状态：**复位入口代码已编译，尚未实机验证，更没有进入 UEFI/Windows。**
+当前状态：**2026-09-17 Z270 实机复位探针已输出 HVFW0，Zone0 SSH 保持可用；尚未进入 UEFI/Windows。**
 不替换已验证的双 Linux 启动项、后端或系统盘。
 
 ## 本轮实现
@@ -94,3 +94,29 @@ HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低
 - 实验启动前必须单独屏蔽 Zone1、virtio 后端及旧 Zone0 模块自动加载。
   客体 cmdline 内嵌于 board.rs，不能误以为给 GRUB 菜单附加参数即可生效。
   应生成独立候选启动项，保留原生 Arch 默认项和现有双 Linux 项。
+
+## 2026-09-17 RAM-only 复位探针实机通过
+
+构建：`Z270_FIRMWARE_PROBE_BOOT=1 CARGO_BUILD_JOBS=32 make ARCH=x86_64 BOARD=z270 LOG=info elf`。
+该显式构建开关只追加本次 Zone0 cmdline 的三个 `systemd.mask=` 和
+`hvisor.firmware_probe=1`，不修改永久服务配置；未设置开关的普通构建不追加。
+
+使用本目录 `firmware-probe-grub.cfg` / `install-firmware-probe.sh` 新增
+`hvisor-z270-firmware-probe` 项。候选 ELF SHA256：
+`c5fe4a02cb4176b3d125178108aa1b714de38c1ee1b8ee490cbe0f68c7fb4a1d`。
+通过 `grub-reboot` 一次性启动；原生 Arch 仍为默认项，原有 payload 哈希均未改变。
+
+实测：三个服务为 masked-runtime；加载匹配 6.18.50-2-lts 的候选模块；
+固定 loader 启动成功，客体 UART 精确输出 `HVFW0\r\n`。
+宿主日志确认 CPU2 从 `0xfffffff0` 启动 Zone1，EPT 仅低端 16 MiB 和高端
+64 KiB 两段，PCI devices=0/buses=0。之后仍能通过 SSH 执行命令。
+这证明复位取指和该串口探针可执行，不证明 UEFI、AP 启动或 Windows 兼容性。
+
+发现一条 `VT-d FRCD[0]: sid=00:02.0, reason=0x01, addr=0x0`。
+本次无核显分配，不能归因为 Windows 或宣称无硬件错误；后续隔离核显固件
+残余 DMA 状态时需核对，不能放开所有 DMA 来掩盖。没有为此改动设备策略。
+
+完整 UART/宿主日志集中保留于目标候选目录以及本地
+`hvisor/artifacts/windows-uefi-probe-20260916-v2/probe-{uart,hvisor}.log`。
+验证后安排一次性返回原有 `hvisor-z270-experimental` 双 Linux 项，
+不让探针长期占据 Zone1。
