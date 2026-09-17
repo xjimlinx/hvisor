@@ -81,3 +81,16 @@ HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低
 下一实机步骤仍需：核实最新地址与内核 → 单独编译对应 headers 的驱动 →
 保留回退、安排不自动启动现有 Zone1 的一次性实验启动 → 只测试 HVFW0。
 不能在磁盘后端占用中的当前 Zone1 上热替换固件或强行卸载 hvisor.ko。
+
+## 2026-09-17 实机连接与候选准备
+
+- 用户提供的 `10.71.150.56` 已通过既有 SSH 主机密钥验证连接；为 ppp0 地址。
+- 当前是原生 Arch，`6.18.50-2-lts`，cmdline 无 `hvisor.zone0=1`；
+  hvisor-zone0、hvisor-zone1、hvisor-virtio-test 均 inactive。
+- 在 `/root/arch-z270-maintenance/hvisor/candidates/windows-uefi-probe-20260917/`
+  集中准备候选；只传输驱动/头文件/探针 loader 源码，在目标机用匹配的
+  6.18.50-2-lts headers、8 线程编译成功，模块 vermagic 匹配。
+- 未替换运行时模块、未加载模块、未改 GRUB、未重启；仍未验证固件实际执行。
+- 实验启动前必须单独屏蔽 Zone1、virtio 后端及旧 Zone0 模块自动加载。
+  客体 cmdline 内嵌于 board.rs，不能误以为给 GRUB 菜单附加参数即可生效。
+  应生成独立候选启动项，保留原生 Arch 默认项和现有双 Linux 项。
