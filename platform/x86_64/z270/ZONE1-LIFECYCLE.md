@@ -1,8 +1,21 @@
 # Z270 Zone1 在线重启：开发检查点
 
 分支 `feat/z270-zone1-lifecycle`，从 Windows 实验分支 b6d7443 分出。
-**未完成、未部署、未实机验证。不能把本分支作为可用 restart 功能。**
-当前实机双 Linux、磁盘后端及 sudo 权限均未因本次开发改变。
+**在线重启未完成、未实机验证。不能把本分支作为可用 restart 功能。**
+2026-09-17 已按用户要求安装安全修复供下次启动使用，未重启整机或后端。
+当前运行实例及 sudo 权限未改变。
+
+部署源：hvisor 273c777，hvisor-tool 8a5dbc0；Z270 INFO，关闭固件探针模式。
+磁盘上的 SHA256：
+
+- `/boot/hvisor/z270/hvisor`：`6d9bb5cc1cd3c82b825a70fc30c5da2f6d37bd9333a9ec03eb9e92a74c04dda5`
+- `/usr/local/lib/hvisor-z270/zone1-virtio-test/hvisor-tool-net`：`0110dbf6628f0fa25546ef2a68b2cbfc697ce8080cdccf3d5966443ac5b63c61`
+
+远端备份和安装脚本集中于
+`/root/arch-z270-maintenance/hvisor/candidates/lifecycle-20260917/`，旧二进制
+在 `backup/hvisor`、`backup/backend`。GRUB 配置逐字比较未变。
+安装使用新文件 rename；后端 PID 506 未变，仍运行旧 inode。
+**仅文件部署完成，下一次启动效果未验证。禁止直接 restart 磁盘后端。**
 
 ## 已修复的停机前置问题
 
@@ -36,7 +49,7 @@ test-lifecycle-contract.py；最后一个只是源码时序回归检查，不证
 初始化/销毁，以及模拟磁盘同步/退出错误；32 线程编译通过。事件线程测试
 另通过 ASan/UBSan。这些没有测试真实磁盘或 PCI 复位，**不能据此启用 restart**。
 尚缺客体停止提交请求的握手、在途 I/O 排空期限和跨进程代次确认；不能在
-客体仍使用根盘时直接停止后端。以上代码均未部署到实机。
+客体仍使用根盘时直接停止后端。代码已安装，尚未在运行实例中生效。
 
 本次只读检查：Zone0/Zone1 均列为 running，后端服务 active；但 Zone1
 10.77.0.2 邻居状态 FAILED、SSH 超时。不能将该状态当作客体已安全关机。
