@@ -125,3 +125,29 @@ HVFW0 探针的 64 KiB 文件，未开放任意 OVMF 加载。固定映射仅低
 恢复状态：已选择原有启动项并发出 reboot；随后 PPP IPv4、两条已知 PPP IPv6、
 Wi-Fi IPv4/IPv6 的 SSH 检查均超时。**尚未确认恢复双 Linux 成功**，
 已请求现场屏幕信息；不可据此断言卡在固件、网络或 Zone1。
+
+## 2026-09-17 用户 Windows ISO 的 QEMU 基线
+
+`windows-qemu-baseline.sh ISO NEW_OUTPUT_DIRECTORY` 提供独立、只读 ISO
+测试：Q35/KVM、OVMF、4 vCPU、6 GiB RAM，无硬盘、网络、TPM、PCI 直通。
+仅测试安装介质进入 WinPE/安装界面，不验证 Windows 11 完整安装要求。
+UEFI DVD 引导提示时需要按键；超时会返回固件菜单，可重新选择 DVD。
+
+用户的 `Win11_25H2_Pro_Chinese_Simplified_x64_v2.iso` 已进入
+Windows 11 安装程序的简体中文语言选择界面。没有执行安装或修改 ISO。
+截图/NVRAM/QMP socket 在本地 `hvisor/artifacts/windows-qemu-iso-20260917/`。
+窗口名称明确标记 NOT hvisor；此结果不计作 hvisor 支持 Windows。
+
+本机 AMD Ryzen 9 9955HX，kvm_amd nested=1，但当前 hvisor x86 后端使用
+Intel VMX。QEMU 11.1.1 实测 `-cpu host,+vmx,enforce -accel kvm` 拒绝启动：
+`Host doesn't support requested features`；TCG 的 `-cpu max,+vmx,enforce`
+同样拒绝：`TCG doesn't support requested features`。
+不能靠 CPUID 标志让 AMD KVM 提供 Intel VMX，也不能把直接 QEMU 启动
+Windows 当作 hvisor 嵌套测试。
+
+后续选择：在原生 Arch 的 Intel Z270 上验证 KVM nested VMX 并构建独立
+QEMU hvisor 环境（不替换裸机启动项），或另立 AMD SVM 后端适配项目。
+前者仍需要 hvisor 的客体 UEFI/存储等实现；换测试平台不等于完成支持。
+本轮没有更改 Z270，也未部署嵌套环境。
+
+参考：https://www.kernel.org/doc/html/latest/virt/kvm/x86/nested-vmx.html
