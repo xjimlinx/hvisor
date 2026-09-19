@@ -13,7 +13,7 @@
 //
 // Authors:
 //
-use aarch64_cpu::{asm::wfi, registers::*};
+use aarch64_cpu::registers::*;
 use core::arch::global_asm;
 
 use super::cpu::GeneralRegisters;
@@ -85,6 +85,7 @@ pub mod PsciFnId {
     pub const PSCI_AFFINITY_INFO_32: u64 = 0x84000004;
     pub const PSCI_MIG_INFO_TYPE: u64 = 0x84000006;
     pub const PSCI_SYSTEM_OFF: u64 = 0x84000008;
+    pub const PSCI_SYSTEM_RESET: u64 = 0x84000009;
     pub const PSCI_FEATURES: u64 = 0x8400000a;
 
     pub const PSCI_CPU_SUSPEND_64: u64 = 0xc4000001;
@@ -331,13 +332,13 @@ fn handle_smc(regs: &mut GeneralRegisters) {
 fn psci_emulate_features_info(code: u64) -> u64 {
     match code {
         PsciFnId::PSCI_VERSION
-        | PsciFnId::PSCI_CPU_SUSPEND_32
-        | PsciFnId::PSCI_CPU_SUSPEND_64
         | PsciFnId::PSCI_CPU_OFF_32
         | PsciFnId::PSCI_CPU_ON_32
         | PsciFnId::PSCI_CPU_ON_64
         | PsciFnId::PSCI_AFFINITY_INFO_32
         | PsciFnId::PSCI_AFFINITY_INFO_64
+        | PsciFnId::PSCI_SYSTEM_OFF
+        | PsciFnId::PSCI_SYSTEM_RESET
         | PsciFnId::PSCI_FEATURES
         | SMCccFnId::SMCCC_VERSION => 0,
         _ => !0,
@@ -345,9 +346,18 @@ fn psci_emulate_features_info(code: u64) -> u64 {
 }
 
 fn psci_emulate_cpu_on(regs: &mut GeneralRegisters) -> u64 {
-    // Todo: Check if `cpu` is in the cpuset of current zone
     let cpu = mpidr_to_cpuid(regs.usr[1]);
     info!("psci: try to wake up cpu {}", cpu);
+
+    // A guest DT can still describe CPUs intentionally withheld from its
+    // zone.  They have no PerCpu.zone assignment, so waking them would later
+    // dereference None in activate_gpm().  PSCI requires INVALID_PARAMS for a
+    // CPU outside the caller's affinity domain; do not turn a guest request
+    // into a hypervisor panic.
+    if !this_zone().read().cpu_set().contains_cpu(cpu as usize) {
+        warn!("psci: cpu {} is outside current zone", cpu);
+        return u64::MAX - 1; // PSCI_INVALID_PARAMS (-2)
+    }
 
     let target_data = get_cpu_data(cpu as _);
     let _lock = target_data.ctrl_lock.lock();
@@ -374,11 +384,10 @@ fn handle_psci_smc(
 ) -> u64 {
     match code {
         PsciFnId::PSCI_VERSION => PSCI_VERSION_1_1,
-        PsciFnId::PSCI_CPU_SUSPEND_32 | PsciFnId::PSCI_CPU_SUSPEND_64 => {
-            wfi();
-            gic_handle_irq();
-            0
-        }
+        // CPU_SUSPEND requires a vCPU wakeup path.  Returning success here and
+        // executing EL2 WFI loses the guest's PSCI wakeup on i.MX8MP.  Do not
+        // advertise it until suspend/resume is implemented end-to-end.
+        PsciFnId::PSCI_CPU_SUSPEND_32 | PsciFnId::PSCI_CPU_SUSPEND_64 => !0,
         PsciFnId::PSCI_CPU_OFF_32 | PsciFnId::PSCI_CPU_OFF_64 => {
             todo!();
         }
@@ -410,10 +419,20 @@ fn handle_psci_smc(
 
             this_cpu_data().arch_cpu.idle();
         }
+        PsciFnId::PSCI_SYSTEM_RESET => {
+            if is_this_root_zone() {
+                info!("psci: system reset requested");
+                psci::system_reset().unwrap();
+            }
+            !0
+        }
 
         _ => {
             warn!("unsupported smc standard service {:#x?}", code);
-            0
+            // SMCCC requires an unimplemented function to return
+            // SMCCC_RET_NOT_SUPPORTED (-1). Returning success makes modern
+            // Linux guests enable RSI/RME and attempt to protect normal RAM.
+            !0
         }
     }
 }
