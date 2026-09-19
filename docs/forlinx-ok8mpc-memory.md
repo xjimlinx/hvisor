@@ -1,5 +1,10 @@
 # Zone0 2.5 GiB desktop candidate
 
+首次扩容启动在 FAR=0x100000000、ELR=0x40418a70 失败；反汇编为
+`dc ivac, x8`。BOARD_PHYSMEM_LIST 第二项是结束地址而非长度，旧 EL2
+映射止于 4 GiB。现修正桌面板级 EL2 表，覆盖全部三段 guest RAM，
+继续排除 DSP、0xec000000–4 GiB 和顶部区域。DTB/GRUB 不变，需重测。
+
 2026-09-19：当前旧内存配置下 Etnaviv GC7000/GC520 已绑定，出现
 `/dev/dri/renderD128`。本候选保持该 GPU/HDMI/USB DTS，仅修改 RAM banks。
 两核不变，扩容不等于解决所有 OOM 或证明长期稳定。
@@ -29,7 +34,7 @@ EFI 构建：`make -C tools/ok8mp-efi-loader build/hvisor-desktop-2g5.efi`。
 部署目录：`/boot/hvisor-profiles/desktop-2g5/`。独立非默认 GRUB 项，
 旧内存版及裸机入口保留。部署校验不代表扩容已实测。
 
-本次部署校验 SHA256：
+首次失败候选的部署 SHA256（Hvisor 需要下面描述的 EL2 修正）：
 
 - hvisor.bin: `195ca0c8bacc83002158f59366dbb6151276363058690f2d85751cf3cb4cb218`
 - zone0.dtb: `d6a1241c5c70d784d39a8855029cbaca608c47d034f18d69c0f5c974f64ff5e1`

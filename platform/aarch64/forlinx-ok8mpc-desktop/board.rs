@@ -21,8 +21,12 @@ pub static BOARD_MPIDR_MAPPINGS: [u64; BOARD_NCPUS] = [0x0, 0x1, 0x2, 0x3];
 
 #[rustfmt::skip]
 pub const BOARD_PHYSMEM_LIST: &[(u64, u64, MemoryType)] = &[
+    // These tuples are (start, END EXCLUSIVE, type), not (start, size).
+    // EL2 must cover every guest RAM bank before cache maintenance by VA.
     (0x0,        0x40000000,  MemoryType::Device),
-    (0x40000000, 0x100000000, MemoryType::Normal),
+    (0x40000000, 0x92400000,  MemoryType::Normal),
+    (0x94400000, 0xec000000,  MemoryType::Normal),
+    (0x100000000, 0x136000000, MemoryType::Normal),
 ];
 
 pub const ROOT_ZONE_DTB_ADDR: u64 = 0xa0000000;
