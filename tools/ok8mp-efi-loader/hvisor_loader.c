@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Minimal AArch64 EFI hand-off loader for Hvisor on the Forlinx OK8MP-C.
-// It is deliberately profile-specific: GRUB chainloads one of two builds.
+// The single supported deployment profile is desktop-2g5.
 
 typedef unsigned char UINT8;
 typedef unsigned short UINT16;
@@ -166,22 +166,8 @@ static UINT8 file_info[1024] __attribute__((aligned(8)));
 
 static const CHAR16 board_dtb_path[] = u"/boot/mainline/OK8MP-C-mainline.dtb";
 static const CHAR16 linux_path[] = u"/boot/mainline/Image-7.2";
-#ifdef PROFILE_DESKTOP
 static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/desktop-2g5/hvisor.bin";
 static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/desktop-2g5/zone0.dtb";
-#elif defined(PROFILE_GPU)
-static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/hdmi-usb-gpu-r1/hvisor.bin";
-static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/hdmi-usb-gpu-r1/zone0.dtb";
-#elif defined(PROFILE_USB)
-static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/hdmi-usb-r1/hvisor.bin";
-static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/hdmi-usb-r1/zone0.dtb";
-#elif defined(PROFILE_FULL)
-static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/full/hvisor.bin";
-static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/full/zone0.dtb";
-#else
-static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/partition/hvisor.bin";
-static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/partition/zone0.dtb";
-#endif
 
 static void copy_bytes(void *dst, const void *src, UINTN size) {
     UINT8 *d = dst;
