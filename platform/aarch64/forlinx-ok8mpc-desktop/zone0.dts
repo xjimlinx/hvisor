@@ -7,7 +7,33 @@
 	#size-cells = <0x02>;
 	model = "Forlinx OK8MPlus-C board";
 
+	/* Forlinx wiring: GPIO1_IO14 controls Type-C source VBUS, not USB-A. */
+	typec_vbus: regulator-typec-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb1_host_vbus";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x209f>;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <0x2e 14 0>;
+		enable-active-high;
+	};
+
+	typec-switch {
+		compatible = "nxp,cbtl04gp";
+		pinctrl-names = "default";
+		pinctrl-0 = <0xa0>;
+		switch-gpios = <0x38 20 1>;
+		orientation-switch;
+		port {
+			typec_mux_ep: endpoint {
+				remote-endpoint = <&typec_ss_ep>;
+			};
+		};
+	};
+
 	aliases {
+		i2c2 = "/soc@0/bus@30800000/i2c@30a40000";
 		serial0 = "/soc@0/bus@30800000/serial@30860000";
 		serial1 = "/soc@0/bus@30800000/serial@30890000";
 		serial3 = "/soc@0/bus@30800000/serial@30a60000";
@@ -689,7 +715,7 @@
 				};
 
 				usb1grp {
-					fsl,pins = <0x4c 0x2ac 0x00 0x01 0x00 0x10>;
+					fsl,pins = <0x4c 0x2ac 0x00 0x00 0x00 0x19>;
 					phandle = <0x209f>;
 				};
 
@@ -947,6 +973,57 @@
 			#address-cells = <0x01>;
 			#size-cells = <0x01>;
 			ranges;
+
+			/* Only the Type-C controller is added; no codec/AP/PMIC changes. */
+			i2c@30a40000 {
+				compatible = "fsl,imx8mp-i2c", "fsl,imx21-i2c";
+				reg = <0x30a40000 0x10000>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				interrupts = <0 37 4>;
+				clocks = <0x03 0xcf>;
+				clock-frequency = <100000>;
+				pinctrl-names = "default";
+				pinctrl-0 = <0x35>;
+				status = "okay";
+
+				typec-port@22 {
+					compatible = "fcs,fusb302";
+					reg = <0x22>;
+					pinctrl-names = "default";
+					pinctrl-0 = <0x36>;
+					vbus-supply = <&typec_vbus>;
+					interrupt-parent = <0x38>;
+					interrupts = <19 8>;
+					connector {
+						compatible = "usb-c-connector";
+						label = "USB-C";
+						power-role = "dual";
+						data-role = "dual";
+						try-power-role = "sink";
+						/* PDO_FIXED(5000, 1500, PDO_FIXED_USB_COMM). */
+						source-pdos = <0x04019096>;
+						sink-pdos = <0x04019096>;
+						op-sink-microwatt = <7500000>;
+						ports {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							port@0 {
+								reg = <0>;
+								typec_role_ep: endpoint {
+									remote-endpoint = <&usb0_role_ep>;
+								};
+							};
+							port@1 {
+								reg = <1>;
+								typec_ss_ep: endpoint {
+									remote-endpoint = <&typec_mux_ep>;
+								};
+							};
+						};
+					};
+				};
+			};
 
 			i2c@30a20000 {
 				#address-cells = <0x01>;
@@ -1464,7 +1541,13 @@
 			assigned-clock-parents = <0x03 0x02>;
 			power-domains = <0x2080 0x01>;
 			#phy-cells = <0x00>;
-			status = "disabled";
+			status = "okay";
+			fsl,phy-tx-vref-tune = <6>;
+			fsl,phy-tx-rise-tune = <0>;
+			fsl,phy-tx-preemp-amp-tune = <3>;
+			fsl,phy-comp-dis-tune = <7>;
+			fsl,pcs-tx-deemph-3p5db = <0x21>;
+			fsl,phy-pcs-tx-swing-full = <0x7f>;
 			phandle = <0x209d>;
 		};
 
@@ -1492,7 +1575,7 @@
 			#size-cells = <0x01>;
 			dma-ranges = <0x40000000 0x40000000 0xc0000000>;
 			ranges;
-			status = "disabled";
+			status = "okay";
 			phandle = <0x2113>;
 
 			usb@38100000 {
@@ -1506,6 +1589,14 @@
 				snps,gfladj-refclk-lpm-sel-quirk;
 				snps,parkmode-disable-ss-quirk;
 				phandle = <0x2114>;
+				dr_mode = "otg";
+				usb-role-switch;
+				status = "okay";
+				port {
+					usb0_role_ep: endpoint {
+						remote-endpoint = <&typec_role_ep>;
+					};
+				};
 			};
 		};
 
@@ -1533,8 +1624,6 @@
 				phy-names = "usb2-phy", "usb3-phy";
 				snps,gfladj-refclk-lpm-sel-quirk;
 				snps,parkmode-disable-ss-quirk;
-				pinctrl-names = "default";
-				pinctrl-0 = <0x209f>;
 				dr_mode = "host";
 				status = "okay";
 				phandle = <0x2116>;
@@ -1597,7 +1686,7 @@
 		assigned-clocks = <0x03 0x93>;
 		assigned-clock-parents = <0x03 0x02>;
 		#phy-cells = <0x00>;
-		status = "okay";
+		status = "disabled";
 		fsl,phy-tx-vref-tune = <0x06>;
 		fsl,phy-tx-rise-tune = <0x00>;
 		fsl,phy-tx-preemp-amp-tune = <0x03>;
@@ -1617,7 +1706,7 @@
 		#address-cells = <0x02>;
 		#size-cells = <0x02>;
 		ranges;
-		status = "okay";
+		status = "disabled";
 
 		dwc3@38100000 {
 			compatible = "snps,dwc3";
@@ -1644,7 +1733,7 @@
 		assigned-clocks = <0x03 0x93>;
 		assigned-clock-parents = <0x03 0x02>;
 		#phy-cells = <0x00>;
-		status = "okay";
+		status = "disabled";
 		fsl,phy-tx-preemp-amp-tune = <0x02>;
 		phandle = <0x82>;
 	};
@@ -1659,7 +1748,7 @@
 		#address-cells = <0x02>;
 		#size-cells = <0x02>;
 		ranges;
-		status = "okay";
+		status = "disabled";
 
 		dwc3@38200000 {
 			compatible = "snps,dwc3";

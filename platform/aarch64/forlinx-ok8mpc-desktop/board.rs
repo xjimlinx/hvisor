@@ -60,10 +60,10 @@ pub const ROOT_ZONE_MEMORY_REGIONS: [HvConfigMemoryRegion; 15] = [
 
 pub const IRQ_WAKEUP_VIRTIO_DEVICE: usize = 32 + 0x20;
 
-/// Exact 36-SPI list in Baozixu's i.MX8MP board profile.
+/// Desktop peripheral INTIDs, including I2C3 (SPI 37 + 32) for USB-C.
 #[rustfmt::skip]
 pub const ROOT_ZONE_IRQS_BITMAP: &[BitmapWord] = &get_irqs_bitmap(&[
-    34, 35, 36, 37, 38, 45, 52, 54, 55, 56, 57, 58, 59, 64, 67, 72, 73, 74,
+    34, 35, 36, 37, 38, 45, 52, 54, 55, 56, 57, 58, 59, 64, 67, 69, 72, 73, 74,
     75, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 135, 150, 151, 152,
     162, 180, 181,
 ]);
