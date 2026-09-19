@@ -38,6 +38,7 @@
 		serial1 = "/soc@0/bus@30800000/serial@30890000";
 		serial3 = "/soc@0/bus@30800000/serial@30a60000";
 		mmc2 = "/soc@0/bus@30800000/mmc@30b50000";
+		mmc0 = "/soc@0/bus@30800000/mmc@30b40000";
 		mmc3 = "/soc@0/bus@30800000/mmc@30b60000";
 		ethernet0 = "/soc@0/bus@30800000/ethernet@30be0000";
 		gpio0 = "/soc@0/bus@30000000/gpio@30200000";
@@ -1143,6 +1144,26 @@
 				};
 			};
 
+			/* On-board SDIO WLAN; IRQ 22 + 32 is already owned by Zone0. */
+			mmc@30b40000 {
+				compatible = "fsl,imx8mp-usdhc", "fsl,imx8mm-usdhc", "fsl,imx7d-usdhc";
+				reg = <0x30b40000 0x10000>;
+				interrupts = <0 22 4>;
+				clocks = <0x03 0x6e 0x03 0x5f 0x03 0x101>;
+				clock-names = "ipg", "ahb", "per";
+				fsl,tuning-start-tap = <20>;
+				fsl,tuning-step = <2>;
+				pinctrl-names = "default", "state_100mhz", "state_200mhz";
+				pinctrl-0 = <0x40>;
+				pinctrl-1 = <0x42>;
+				pinctrl-2 = <0x43>;
+				bus-width = <4>;
+				non-removable;
+				keep-power-in-suspend;
+				mmc-pwrseq = <0x44>;
+				status = "okay";
+			};
+
 			mmc@30b50000 {
 				compatible = "fsl,imx8mm-usdhc", "fsl,imx7d-usdhc";
 				reg = <0x30b50000 0x10000>;
@@ -1778,6 +1799,8 @@
 
 	usdhc1_pwrseq {
 		compatible = "mmc-pwrseq-simple";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x41>;
 		reset-gpios = <0x49 0x08 0x01>;
 		phandle = <0x44>;
 	};

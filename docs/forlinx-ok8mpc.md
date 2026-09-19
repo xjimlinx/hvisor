@@ -10,7 +10,8 @@
 - Etnaviv GC7000/GC520 已绑定，存在 renderD128；未进行定量图形性能测试。
 - 暂无 swap；扩容不保证所有负载都不会 OOM。
 - USB-C 已验证 Host 枚举：扩展坞、HID 接收器、RTL8153 网卡（USB 2.0 480M）。
-- Type-C SuperSpeed、两种插入方向、Gadget 和长期稳定性仍待验收；无线 AP 尚未完成。
+- 板载无线已通过 SDIO 枚举、Wi-Fi 关联、DHCP 和无线 HTTPS 联网测试。
+- Type-C SuperSpeed、两种插入方向、Gadget 和长期稳定性仍待验收；无线热点 AP 模式及蓝牙未验收。
 - Type-C 不等于视频输出：当前未实现 DP Alt Mode，请使用板载 HDMI。
 - 保留上游其他平台代码。旧 OK8MP-C 实验方案从工作树移除，可从 Git 历史恢复。
 
