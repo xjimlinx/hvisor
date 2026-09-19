@@ -11,6 +11,9 @@ build:
 build/hvisor-usb-r4-fast.efi: hvisor_loader.c | build
 	$(CLANG) $(CFLAGS) -DPROFILE_USB $(LDFLAGS) $< -o $@
 
+build/hvisor-desktop-2g5.efi: hvisor_loader.c | build
+	$(CLANG) $(CFLAGS) -DPROFILE_DESKTOP $(LDFLAGS) $< -o $@
+
 verify: all
 	grub-file --is-arm64-efi build/hvisor-usb-r4-fast.efi
 	grub-script-check bootstrap.cfg

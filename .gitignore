@@ -39,3 +39,5 @@ src/platform/__board.rs
 rootfs1.zip*
 jenkins/__pycache__
 jenkins-cli.jar
+__pycache__/
+*.pyc

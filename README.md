@@ -14,6 +14,9 @@
 
 README: [中文](./README-zh.md) | [English](./README.md)
 
+For this fork's tested Forlinx OK8MP-C setup, start with the
+[board guide](docs/forlinx-ok8mpc.md): HDMI, USB Host and GRUB EFI boot.
+
 hvisor is a Type-1 bare-metal virtual machine monitor implemented in Rust, featuring a separation kernel design to provide efficient hardware resource virtualization and isolation. This virtual machine monitor allows strict system environment separation, ensuring performance and security of the virtualized environments through distinct regions.
 
 ## Features

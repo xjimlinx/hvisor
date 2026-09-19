@@ -166,7 +166,10 @@ static UINT8 file_info[1024] __attribute__((aligned(8)));
 
 static const CHAR16 board_dtb_path[] = u"/boot/mainline/OK8MP-C-mainline.dtb";
 static const CHAR16 linux_path[] = u"/boot/mainline/Image-7.2";
-#ifdef PROFILE_GPU
+#ifdef PROFILE_DESKTOP
+static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/desktop-2g5/hvisor.bin";
+static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/desktop-2g5/zone0.dtb";
+#elif defined(PROFILE_GPU)
 static const CHAR16 hvisor_path[] = u"/boot/hvisor-profiles/hdmi-usb-gpu-r1/hvisor.bin";
 static const CHAR16 zone0_path[] = u"/boot/hvisor-profiles/hdmi-usb-gpu-r1/zone0.dtb";
 #elif defined(PROFILE_USB)

@@ -15,6 +15,9 @@
 
 README：[中文](./README-zh.md) | [English](./README.md)
 
+本分支飞凌 OK8MP-C 的已验证配置、构建和部署入口见
+[板级指南](docs/forlinx-ok8mpc.md)（HDMI、USB Host、GRUB EFI 引导）。
+
 hvisor 是一个用 Rust 实现的 Type-1 裸机虚拟机监控器，采用分离内核（Separation Kernel）设计，提供高效的硬件资源虚拟化和隔离能力。该虚拟机监控器实现了严格的虚拟机环境分离，通过不同的区域（zone）确保虚拟化环境的性能和安全性。
 
 ## 特性
